@@ -1,0 +1,33 @@
+{
+  "name": "AzureLoong",
+  "urdf": "../../models/AzureLoong.urdf",
+  "scene": "../../models/scene.xml",
+  "joint_control": "../joint_ctrl_config.json",
+  "frames": {
+    "base_body": "base_link",
+    "left_foot": "Link_ankle_l_roll",
+    "right_foot": "Link_ankle_r_roll",
+    "left_hand": "Link_arm_l_07",
+    "right_hand": "Link_arm_r_07",
+    "left_hip": "Link_hip_l_yaw",
+    "right_hip": "Link_hip_r_yaw",
+    "hip_reference": "Link_waist_yaw"
+  },
+  "sensors": {
+    "orientation": "baselink-quat",
+    "velocity": "baselink-velocity",
+    "gyro": "baselink-gyro",
+    "acceleration": "baselink-baseAcc"
+  },
+  "joints": {
+    "actuated": ["J_arm_l_01", "J_arm_l_02", "J_arm_l_03", "J_arm_l_04", "J_arm_l_05", "J_arm_l_06", "J_arm_l_07", "J_arm_r_01", "J_arm_r_02", "J_arm_r_03", "J_arm_r_04", "J_arm_r_05", "J_arm_r_06", "J_arm_r_07", "J_head_yaw", "J_head_pitch", "J_waist_pitch", "J_waist_roll", "J_waist_yaw", "J_hip_l_roll", "J_hip_l_yaw", "J_hip_l_pitch", "J_knee_l_pitch", "J_ankle_l_pitch", "J_ankle_l_roll", "J_hip_r_roll", "J_hip_r_yaw", "J_hip_r_pitch", "J_knee_r_pitch", "J_ankle_r_pitch", "J_ankle_r_roll"],
+    "left_arm": ["J_arm_l_01", "J_arm_l_02", "J_arm_l_03", "J_arm_l_04", "J_arm_l_05", "J_arm_l_06", "J_arm_l_07"],
+    "right_arm": ["J_arm_r_01", "J_arm_r_02", "J_arm_r_03", "J_arm_r_04", "J_arm_r_05", "J_arm_r_06", "J_arm_r_07"],
+    "left_leg": ["J_hip_l_roll", "J_hip_l_yaw", "J_hip_l_pitch", "J_knee_l_pitch", "J_ankle_l_pitch", "J_ankle_l_roll"],
+    "right_leg": ["J_hip_r_roll", "J_hip_r_yaw", "J_hip_r_pitch", "J_knee_r_pitch", "J_ankle_r_pitch", "J_ankle_r_roll"],
+    "waist": ["J_waist_pitch", "J_waist_roll", "J_waist_yaw"],
+    "head": ["J_head_yaw", "J_head_pitch"]
+  },
+  "initial_joint_positions": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "gait": {"nominal_base_height": 1.01, "hip_width": 0.229, "foot_height": 0.07, "swing_time": 0.25, "walking_speed": 1.2}
+}

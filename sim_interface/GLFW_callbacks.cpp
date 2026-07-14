@@ -16,6 +16,21 @@ UIctr::UIctr(mjModel *modelIn, mjData *dataIn) {
     con=mjrContext();
 }
 
+UIctr::~UIctr() {
+    if (file)
+        fclose(file);
+    free(image_rgb_);
+    free(image_depth_);
+    if (renderResourcesInitialized) {
+        mjr_freeContext(&con);
+        mjv_freeScene(&scn);
+    }
+    if (window)
+        glfwDestroyWindow(window);
+    if (glfwInitialized)
+        glfwTerminate();
+}
+
 
 static void scroll(GLFWwindow* window, double xoffset, double yoffset)
 {
@@ -43,6 +58,7 @@ static void window_close_callback(GLFWwindow* window)
 void UIctr::iniGLFW() {
     if( !glfwInit() )
         mju_error("Could not initialize GLFW");
+    glfwInitialized = true;
 //    char **tmp;
 //    glutInit(0,tmp);
     //glutDisplayFunc(UIctr::displaySimTime);
@@ -51,6 +67,8 @@ void UIctr::iniGLFW() {
 // create window, make OpenGL context current, request v-sync, adjust view, bond callbacks, etc.
 void UIctr::createWindow(const char* windowTitle, bool saveVideo) {
     window=glfwCreateWindow(width, height, windowTitle, NULL, NULL);
+    if (!window)
+        mju_error("Could not create GLFW window");
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     mjv_defaultCamera(&cam);
@@ -78,6 +96,7 @@ void UIctr::createWindow(const char* windowTitle, bool saveVideo) {
     mjr_defaultContext(&con);
     mjv_makeScene(mj_model, &scn, 2000);                // space for 2000 objects
     mjr_makeContext(mj_model, &con, mjFONTSCALE_150);   // model-specific context
+    renderResourcesInitialized = true;
     mjv_moveCamera(mj_model, mjMOUSE_ROTATE_H, 0.0, 0.0, &scn, &cam);
 
     // install GLFW mouse and keyboard callbacks
@@ -254,14 +273,8 @@ void UIctr::Scroll(double xoffset, double yoffset)
 }
 
 void UIctr::Close() {
-    // Free mujoco objects
-    mj_deleteData(mj_data);
-    mj_deleteModel(mj_model);
-    mjr_freeContext(&con);
-    mjv_freeScene(&scn);
-
-
-    glfwTerminate();
+    if (window)
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
 
 void UIctr::enableTracking() {

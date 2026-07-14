@@ -18,6 +18,7 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 #include "pinocchio/algorithm/center-of-mass.hpp"
 #include "pinocchio/algorithm/aba.hpp"
 #include "data_bus.h"
+#include "robot_model_config.h"
 #include <string>
 #include "json/json.h"
 #include <vector>
@@ -26,7 +27,7 @@ class Pin_KinDyn
 {
 public:
     std::vector<bool> motorReachLimit;
-    const std::vector<std::string> motorName = {"J_arm_l_01", "J_arm_l_02", "J_arm_l_03", "J_arm_l_04", "J_arm_l_05",
+    std::vector<std::string> motorName = {"J_arm_l_01", "J_arm_l_02", "J_arm_l_03", "J_arm_l_04", "J_arm_l_05",
                                                 "J_arm_l_06", "J_arm_l_07", "J_arm_r_01", "J_arm_r_02", "J_arm_r_03",
                                                 "J_arm_r_04", "J_arm_r_05", "J_arm_r_06", "J_arm_r_07",
                                                 "J_head_yaw", "J_head_pitch", "J_waist_pitch", "J_waist_roll", "J_waist_yaw",
@@ -34,6 +35,7 @@ public:
                                                 "J_ankle_l_pitch", "J_ankle_l_roll", "J_hip_r_roll", "J_hip_r_yaw",
                                                 "J_hip_r_pitch", "J_knee_r_pitch", "J_ankle_r_pitch", "J_ankle_r_roll"}; // joint name in urdf and jason config files
     Eigen::VectorXd motorMaxTorque;
+    Eigen::VectorXd motorMaxSpeed;
     Eigen::VectorXd motorMaxPos;
     Eigen::VectorXd motorMinPos;
 
@@ -45,6 +47,9 @@ public:
     pinocchio::JointIndex r_ankle_joint, l_ankle_joint, base_joint, r_hip_joint, l_hip_joint, r_hip_roll_joint, l_hip_roll_joint, waist_yaw_joint;
     pinocchio::JointIndex r_ankle_joint_fixed, l_ankle_joint_fixed, r_hip_joint_fixed, l_hip_joint_fixed;
     pinocchio::JointIndex r_hand_joint, l_hand_joint, r_hand_joint_fixed, l_hand_joint_fixed;
+    pinocchio::FrameIndex r_foot_frame, l_foot_frame, r_hand_frame, l_hand_frame;
+    pinocchio::FrameIndex r_hip_frame, l_hip_frame, hip_reference_frame, base_frame;
+    pinocchio::FrameIndex r_foot_frame_fixed, l_foot_frame_fixed, r_hand_frame_fixed, l_hand_frame_fixed;
     Eigen::VectorXd q, dq, ddq;
     Eigen::Matrix3d Rcur;
     Eigen::Quaternion<double> quatCur;
@@ -81,6 +86,7 @@ public:
     };
 
     Pin_KinDyn(std::string urdf_pathIn);
+    explicit Pin_KinDyn(const RobotModelConfig &configIn);
     void dataBusRead(DataBus const &robotState);
     void dataBusWrite(DataBus &robotState);
     void computeJ_dJ();
@@ -92,5 +98,7 @@ public:
     void workspaceConstraint(Eigen::VectorXd &qFT, Eigen::VectorXd &tauJointFT);
 
 private:
+    RobotModelConfig config;
+    std::vector<int> motorQIndex, motorVIndex;
     pinocchio::Data data_biped, data_biped_fixed;
 };

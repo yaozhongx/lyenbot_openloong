@@ -13,7 +13,7 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 
 class UIctr{
 public:
-    GLFWwindow *window;
+    GLFWwindow *window{nullptr};
     // keyboard
     struct ButtonState {
         bool key_w{false};
@@ -38,6 +38,7 @@ public:
     mjData* mj_data;
 
     UIctr(mjModel *modelIn, mjData *dataIn);
+    ~UIctr();
     void iniGLFW();
     void createWindow(const char * windowTitle, bool saveVideo);
     void updateScene();
@@ -61,21 +62,22 @@ public:
 
 
 private:
-    unsigned char* image_rgb_;
-    float* image_depth_;
+    unsigned char* image_rgb_{nullptr};
+    float* image_depth_{nullptr};
 
-    FILE* file;
+    FILE* file{nullptr};
 
     int width{1200};
     int height{800};
     bool save_video{false};
 
     bool isTrack{false};
+    bool glfwInitialized{false};
+    bool renderResourcesInitialized{false};
     // UI handler
     mjvCamera cam;                      // abstract camera
     mjvOption opt;                      // visualization options
     mjvScene scn;                       // abstract scene
     mjrContext con;                     // custom GPU context
 };
-
 

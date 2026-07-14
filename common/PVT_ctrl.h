@@ -29,6 +29,9 @@ public:
     std::vector<double> motor_tor_out_link; // final tau output
     std::vector<double> motor_tor_out_motor; // final tau output
     PVT_Ctr(double timeStepIn, const char * jsonPath);
+    PVT_Ctr(double timeStepIn, const char *jsonPath, const std::vector<std::string> &jointNames,
+            const Eigen::VectorXd &urdfMaxTorque, const Eigen::VectorXd &urdfMaxSpeed,
+            const Eigen::VectorXd &urdfMaxPos, const Eigen::VectorXd &urdfMinPos);
     void calMotorsPVT();
     void calMotorsPVT(double deltaP_Lim);
     void enablePV(); // enable PV control item
@@ -55,7 +58,7 @@ private:
     std::vector<LPF_Fst> tau_out_lpf;
     std::vector<int> PV_enable;
     double sign(double in);
-    const std::vector<std::string> motorName={"J_arm_l_01","J_arm_l_02","J_arm_l_03", "J_arm_l_04", "J_arm_l_05",
+    std::vector<std::string> motorName={"J_arm_l_01","J_arm_l_02","J_arm_l_03", "J_arm_l_04", "J_arm_l_05",
                                               "J_arm_l_06","J_arm_l_07","J_arm_r_01", "J_arm_r_02", "J_arm_r_03",
                                               "J_arm_r_04","J_arm_r_05","J_arm_r_06", "J_arm_r_07",
                                               "J_head_yaw","J_head_pitch","J_waist_pitch","J_waist_roll", "J_waist_yaw",
@@ -63,5 +66,4 @@ private:
                                               "J_ankle_l_pitch", "J_ankle_l_roll", "J_hip_r_roll", "J_hip_r_yaw",
                                               "J_hip_r_pitch", "J_knee_r_pitch", "J_ankle_r_pitch", "J_ankle_r_roll"}; // joint name in urdf and jason config files
 };
-
 

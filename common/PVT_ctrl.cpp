@@ -8,6 +8,8 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 
 #include "PVT_ctrl.h"
 
+#include <stdexcept>
+
 PVT_Ctr::PVT_Ctr(double timeStepIn, const char *jsonPath) {
     jointNum=motorName.size();
 
@@ -42,6 +44,49 @@ PVT_Ctr::PVT_Ctr(double timeStepIn, const char *jsonPath) {
         double fc=root_read[motorName[i]]["PVT_LPF_Fc"].asDouble();
         gear[i] = root_read[motorName[i]]["gear"].asDouble();
         tau_out_lpf[i].setPara(fc, timeStepIn);
+        tau_out_lpf[i].ftOut(0);
+    }
+}
+
+PVT_Ctr::PVT_Ctr(double timeStepIn, const char *jsonPath, const std::vector<std::string> &jointNames,
+                 const Eigen::VectorXd &urdfMaxTorque, const Eigen::VectorXd &urdfMaxSpeed,
+                 const Eigen::VectorXd &urdfMaxPos, const Eigen::VectorXd &urdfMinPos)
+    : motorName(jointNames)
+{
+    jointNum = motorName.size();
+    if (urdfMaxTorque.size() != jointNum || urdfMaxSpeed.size() != jointNum || urdfMaxPos.size() != jointNum || urdfMinPos.size() != jointNum)
+        throw std::runtime_error("URDF limit vector size does not match PVT joint list");
+
+    tau_out_lpf.assign(jointNum, LPF_Fst());
+    motor_vel.assign(jointNum, 0);
+    motor_pos_cur.assign(jointNum, 0);
+    motor_pos_des_old.assign(jointNum, 0);
+    motor_tor_out_link.assign(jointNum, 0);
+    motor_tor_out_motor.assign(jointNum, 0);
+    pvt_Kp.assign(jointNum, 0);
+    pvt_Kd.assign(jointNum, 0);
+    maxTor.assign(jointNum, 0);
+    maxVel.assign(jointNum, 0);
+    maxPos.assign(jointNum, 0);
+    minPos.assign(jointNum, 0);
+    PV_enable.assign(jointNum, 1);
+    gear.assign(jointNum, 1.0);
+
+    Json::Reader reader;
+    Json::Value root;
+    std::ifstream input(jsonPath, std::ios::binary);
+    if (!input || !reader.parse(input, root))
+        throw std::runtime_error(std::string("Cannot read PVT config: ") + jsonPath);
+    for (int i = 0; i < jointNum; ++i)
+    {
+        pvt_Kp[i] = root[motorName[i]]["kp"].asDouble();
+        pvt_Kd[i] = root[motorName[i]]["kd"].asDouble();
+        gear[i] = root[motorName[i]].get("gear", 1.0).asDouble();
+        maxTor[i] = urdfMaxTorque[i];
+        maxVel[i] = urdfMaxSpeed[i];
+        maxPos[i] = urdfMaxPos[i];
+        minPos[i] = urdfMinPos[i];
+        tau_out_lpf[i].setPara(root[motorName[i]]["PVT_LPF_Fc"].asDouble(), timeStepIn);
         tau_out_lpf[i].ftOut(0);
     }
 }

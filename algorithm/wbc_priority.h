@@ -26,7 +26,8 @@ public:
     double f_z_low{0},f_z_upp{0};
     DataBus::LegState legStateCur;
     DataBus::MotionState motionStateCur;
-    WBC_priority(int model_nv_In, int QP_nvIn, int QP_ncIn, double miu_In, double dt);
+    WBC_priority(int model_nv_In, int QP_nvIn, int QP_ncIn, double miu_In, double dt,
+                 const RobotModelConfig *config = nullptr, const pinocchio::Model *model = nullptr);
     double miu{0.5};
     Eigen::MatrixXd dyn_M, dyn_M_inv, dyn_Ag, dyn_dAg;
     Eigen::VectorXd dyn_Non; // dyn_Non= c*dq+g
@@ -84,6 +85,19 @@ private:
     Eigen::Vector3d stanceDesPos_W;
     Eigen::VectorXd des_ddq, des_dq, des_delta_q, des_q;
     Eigen::VectorXd qIniDes, qIniCur;
+    std::vector<int> armQIndices, armVIndices, waistQIndices, waistVIndices, headQIndices, headVIndices;
+    int leftHipPitchQ{-1}, rightHipPitchQ{-1};
+    Eigen::VectorXd targetArmQ;
+    bool useFullFootContact{false};
+    bool standContactInitialized{false};
+    Eigen::Vector3d standLeftFootPosition, standRightFootPosition;
+    Eigen::Matrix3d standLeftFootRotation, standRightFootRotation;
+    DataBus::LegState walkContactLeg{DataBus::DSt};
+    Eigen::Vector3d walkLeftFootPosition, walkRightFootPosition, walkStancePosition;
+    Eigen::Matrix3d walkLeftFootRotation, walkRightFootRotation, walkStanceRotation;
+
+    static Eigen::VectorXd gather(const Eigen::VectorXd &source, const std::vector<int> &indices);
+    static void zeroColumns(Eigen::MatrixXd &matrix, const std::vector<int> &indices);
 
     static const int QP_nv_des=18;
     static const int QP_nc_des=22;
@@ -95,5 +109,3 @@ private:
     qpOASES::real_t qp_ubA[QP_nc_des];
     qpOASES::real_t xOpt_iniGuess[QP_nv_des];
 };
-
-

@@ -9,6 +9,7 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 
 #include <mujoco/mujoco.h>
 #include "data_bus.h"
+#include "robot_model_config.h"
 #include <string>
 #include <vector>
 
@@ -27,20 +28,23 @@ public:
     double baseAcc[3]{0};  // acceleration of baselink, in body frame
     double baseAngVel[3]{0}; // angular velocity of baselink, in body frame
     double baseLinVel[3]{0}; // linear velocity of baselink, in body frame
-    const std::vector<std::string> JointName={ "J_arm_l_01","J_arm_l_02","J_arm_l_03", "J_arm_l_04", "J_arm_l_05",
+    std::vector<std::string> JointName={ "J_arm_l_01","J_arm_l_02","J_arm_l_03", "J_arm_l_04", "J_arm_l_05",
                                                "J_arm_l_06","J_arm_l_07","J_arm_r_01", "J_arm_r_02", "J_arm_r_03",
                                                "J_arm_r_04","J_arm_r_05","J_arm_r_06", "J_arm_r_07",
                                                "J_head_yaw","J_head_pitch","J_waist_pitch","J_waist_roll", "J_waist_yaw",
                                                "J_hip_l_roll", "J_hip_l_yaw", "J_hip_l_pitch", "J_knee_l_pitch",
                                                "J_ankle_l_pitch", "J_ankle_l_roll", "J_hip_r_roll", "J_hip_r_yaw",
                                                "J_hip_r_pitch", "J_knee_r_pitch", "J_ankle_r_pitch", "J_ankle_r_roll"}; // joint name in XML file, the corresponds motors name should be M_*, ref to line 29 of MJ_Interface.cpp
-    const std::string baseName="base_link";
-    const std::string orientationSensorName="baselink-quat"; // in quat, mujoco order is [w,x,y,z], here we rearrange to [x,y,z,w]
-    const std::string velSensorName="baselink-velocity";
-    const std::string gyroSensorName="baselink-gyro";
-    const std::string accSensorName="baselink-baseAcc";
+    std::string baseName="base_link";
+    std::string orientationSensorName="baselink-quat"; // in quat, mujoco order is [w,x,y,z], here we rearrange to [x,y,z,w]
+    std::string velSensorName="baselink-velocity";
+    std::string gyroSensorName="baselink-gyro";
+    std::string accSensorName="baselink-baseAcc";
+    std::string leftFootContactSensorName;
+    std::string rightFootContactSensorName;
 
     MJ_Interface(mjModel *mj_modelIn, mjData  *mj_dataIn);
+    MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn, const RobotModelConfig &config);
     void updateSensorValues();
     void setMotorsTorque(std::vector<double> &tauIn);
     void dataBusWrite(DataBus &busIn);
@@ -55,10 +59,10 @@ private:
     int gyroSensorId;
     int accSensorId;
     int baseBodyId;
+    int leftFootContactSensorId{-1};
+    int rightFootContactSensorId{-1};
 
     double timeStep{0.001}; // second
     bool isIni{false};
 };
-
-
 

@@ -9,6 +9,7 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 #pragma once
 
 #include <Eigen/Dense>
+#include <limits>
 #include "data_bus.h"
 
 class FootPlacement
@@ -17,6 +18,8 @@ public:
     double kp_vx{0}, kp_vy{0}, kp_wz{0};
     double legLength{1};
     double stepHeight{0.1};
+    double maxStepLength{std::numeric_limits<double>::infinity()};
+    double maxStepWidthChange{std::numeric_limits<double>::infinity()};
     double phi{0};      // phase varialbe for trajectory generation, must between 0 and 1
     double tSwing{0.4}; // swing time
     Eigen::Vector3d posStart_W, posDes_W, hipPos_W, STPos_W;

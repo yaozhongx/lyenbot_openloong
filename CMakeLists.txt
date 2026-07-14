@@ -101,3 +101,13 @@ target_link_libraries(walk_mpc_wbc_joystick core mujoco qpOASES ${sysSimLibs} dl
 
 add_executable(walk_wbc_staircase demo/walk_wbc_staircase.cpp)
 target_link_libraries(walk_wbc_staircase core mujoco qpOASES ${sysSimLibs} dl)
+
+# Headless URDF/configuration validator. It intentionally does not open GLFW.
+add_executable(model_check demo/model_check.cpp)
+target_link_libraries(model_check core mujoco ${sysSimLibs} dl)
+
+add_executable(generate_mjcf demo/generate_mjcf.cpp)
+target_link_libraries(generate_mjcf core mujoco ${sysSimLibs} dl)
+
+add_executable(lyenbot_staged demo/lyenbot_staged.cpp)
+target_link_libraries(lyenbot_staged core mujoco qpOASES ${sysSimLibs} dl)

@@ -7,10 +7,25 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 */
 #include "MJ_interface.h"
 
+#include <stdexcept>
+
 MJ_Interface::MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn)
+    : MJ_Interface(mj_modelIn, mj_dataIn, azureLoongDefaultConfig())
+{
+}
+
+MJ_Interface::MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn, const RobotModelConfig &config)
 {
     mj_model = mj_modelIn;
     mj_data = mj_dataIn;
+    JointName = config.joints.actuated;
+    baseName = config.baseBody;
+    orientationSensorName = config.orientationSensor;
+    velSensorName = config.velocitySensor;
+    gyroSensorName = config.gyroSensor;
+    accSensorName = config.accelerationSensor;
+    leftFootContactSensorName = config.leftFootContactSensor;
+    rightFootContactSensorName = config.rightFootContactSensor;
     timeStep = mj_model->opt.timestep;
     jointNum = JointName.size();
     jntId_qpos.assign(jointNum, 0);
@@ -29,12 +44,17 @@ MJ_Interface::MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn)
         }
         jntId_qpos[i] = mj_model->jnt_qposadr[tmpId];
         jntId_qvel[i] = mj_model->jnt_dofadr[tmpId];
-        std::string motorName = JointName[i];
-        motorName = "M" + motorName.substr(1);
-        tmpId = mj_name2id(mj_model, mjOBJ_ACTUATOR, motorName.c_str());
-        if (tmpId == -1)
+        const int jointId = tmpId;
+        tmpId = -1;
+        for (int actuatorId = 0; actuatorId < mj_model->nu; ++actuatorId)
+            if (mj_model->actuator_trnid[2 * actuatorId] == jointId)
+            {
+                tmpId = actuatorId;
+                break;
+            }
+        if (tmpId < 0)
         {
-            std::cerr << motorName << " not found in the XML file!" << std::endl;
+            std::cerr << "Actuator for " << JointName[i] << " not found in the XML file!" << std::endl;
             std::terminate();
         }
         jntId_dctl[i] = tmpId;
@@ -48,6 +68,12 @@ MJ_Interface::MJ_Interface(mjModel *mj_modelIn, mjData *mj_dataIn)
     velSensorId = mj_name2id(mj_model, mjOBJ_SENSOR, velSensorName.c_str());
     gyroSensorId = mj_name2id(mj_model, mjOBJ_SENSOR, gyroSensorName.c_str());
     accSensorId = mj_name2id(mj_model, mjOBJ_SENSOR, accSensorName.c_str());
+    if (!leftFootContactSensorName.empty())
+        leftFootContactSensorId = mj_name2id(mj_model, mjOBJ_SENSOR, leftFootContactSensorName.c_str());
+    if (!rightFootContactSensorName.empty())
+        rightFootContactSensorId = mj_name2id(mj_model, mjOBJ_SENSOR, rightFootContactSensorName.c_str());
+    if (baseBodyId < 0 || orientataionSensorId < 0 || velSensorId < 0 || gyroSensorId < 0 || accSensorId < 0)
+        throw std::runtime_error("Required base body or IMU sensor is missing from MuJoCo model");
 }
 
 void MJ_Interface::updateSensorValues()
@@ -85,14 +111,19 @@ void MJ_Interface::updateSensorValues()
         basePos[i] = mj_data->xpos[3 * baseBodyId + i];
         baseAcc[i] = mj_data->sensordata[mj_model->sensor_adr[accSensorId] + i];
         baseAngVel[i] = mj_data->sensordata[mj_model->sensor_adr[gyroSensorId] + i];
-        baseLinVel[i] = (basePos[i] - posOld) / (mj_model->opt.timestep);
+        baseLinVel[i] = isIni ? (basePos[i] - posOld) / (mj_model->opt.timestep) : 0.0;
     }
+    if (leftFootContactSensorId >= 0)
+        f3d[2][0] = mj_data->sensordata[mj_model->sensor_adr[leftFootContactSensorId]];
+    if (rightFootContactSensorId >= 0)
+        f3d[2][1] = mj_data->sensordata[mj_model->sensor_adr[rightFootContactSensorId]];
+    isIni = true;
 }
 
 void MJ_Interface::setMotorsTorque(std::vector<double> &tauIn)
 {
     for (int i = 0; i < jointNum; i++)
-        mj_data->ctrl[i] = tauIn.at(i);
+        mj_data->ctrl[jntId_dctl[i]] = tauIn.at(i);
 }
 
 void MJ_Interface::dataBusWrite(DataBus &busIn)
@@ -108,12 +139,12 @@ void MJ_Interface::dataBusWrite(DataBus &busIn)
     busIn.fR[0] = f3d[0][1];
     busIn.fR[1] = f3d[1][1];
     busIn.fR[2] = f3d[2][1];
-    // busIn.basePos[0] = basePos[0];
-    // busIn.basePos[1] = basePos[1];
-    // busIn.basePos[2] = basePos[2];
-    // busIn.baseLinVel[0] = baseLinVel[0];
-    // busIn.baseLinVel[1] = baseLinVel[1];
-    // busIn.baseLinVel[2] = baseLinVel[2];
+    busIn.basePos[0] = basePos[0];
+    busIn.basePos[1] = basePos[1];
+    busIn.basePos[2] = basePos[2];
+    busIn.baseLinVel[0] = baseLinVel[0];
+    busIn.baseLinVel[1] = baseLinVel[1];
+    busIn.baseLinVel[2] = baseLinVel[2];
     busIn.baseAcc[0] = baseAcc[0];
     busIn.baseAcc[1] = baseAcc[1];
     busIn.baseAcc[2] = baseAcc[2];

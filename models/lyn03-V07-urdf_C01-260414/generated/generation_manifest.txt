@@ -1,0 +1,4 @@
+source_urdf=/home/yzx/Openloong/lyenbot_openloong/models/lyn03-V07-urdf_C01-260414/lyn03-V07-C01-260326.urdf
+source_sha256=86cc7c32154cfc938337ec7eaf77a42c3146fc39b91f214fb87ec5c2c874ce22
+command=./generate_mjcf common/robot_configs/lyenbot.json
+normalized_attribute_whitespace=4

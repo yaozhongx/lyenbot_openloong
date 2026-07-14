@@ -9,8 +9,23 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 #include "wbc_priority.h"
 #include "iostream"
 
+Eigen::VectorXd WBC_priority::gather(const Eigen::VectorXd &source, const std::vector<int> &indices)
+{
+    Eigen::VectorXd result(indices.size());
+    for (std::size_t i = 0; i < indices.size(); ++i)
+        result[i] = source[indices[i]];
+    return result;
+}
+
+void WBC_priority::zeroColumns(Eigen::MatrixXd &matrix, const std::vector<int> &indices)
+{
+    for (const int column : indices)
+        matrix.col(column).setZero();
+}
+
 // QP_nvIn=18, QP_ncIn=22
-WBC_priority::WBC_priority(int model_nv_In, int QP_nvIn, int QP_ncIn, double miu_In, double dt) : QP_prob(QP_nvIn,
+WBC_priority::WBC_priority(int model_nv_In, int QP_nvIn, int QP_ncIn, double miu_In, double dt,
+                           const RobotModelConfig *config, const pinocchio::Model *model) : QP_prob(QP_nvIn,
                                                                                                           QP_ncIn)
 {
     timeStep = dt;
@@ -54,6 +69,56 @@ WBC_priority::WBC_priority(int model_nv_In, int QP_nvIn, int QP_ncIn, double miu
 
     base_rpy_cur = Eigen::VectorXd::Zero(3);
 
+    if (config && model)
+    {
+        useFullFootContact = true;
+        auto appendIndices = [&](const std::vector<std::string> &names, std::vector<int> &qIndices, std::vector<int> &vIndices)
+        {
+            for (const auto &name : names)
+            {
+                const auto jointId = model->getJointId(name);
+                qIndices.push_back(model->idx_qs[jointId]);
+                vIndices.push_back(model->idx_vs[jointId]);
+            }
+        };
+        appendIndices(config->joints.leftArm, armQIndices, armVIndices);
+        appendIndices(config->joints.rightArm, armQIndices, armVIndices);
+        appendIndices(config->joints.waist, waistQIndices, waistVIndices);
+        appendIndices(config->joints.head, headQIndices, headVIndices);
+        for (const auto &name : config->joints.leftLeg)
+            if (name.find("hip") != std::string::npos && name.find("pitch") != std::string::npos)
+                leftHipPitchQ = model->idx_qs[model->getJointId(name)];
+        for (const auto &name : config->joints.rightLeg)
+            if (name.find("hip") != std::string::npos && name.find("pitch") != std::string::npos)
+                rightHipPitchQ = model->idx_qs[model->getJointId(name)];
+        targetArmQ = Eigen::VectorXd::Zero(armQIndices.size());
+        for (std::size_t i = 0; i < armQIndices.size(); ++i)
+        {
+            for (std::size_t motor = 0; motor < config->joints.actuated.size(); ++motor)
+                if (model->idx_qs[model->getJointId(config->joints.actuated[motor])] == armQIndices[i])
+                    targetArmQ[i] = config->initialJointPositions[motor];
+        }
+    }
+    else
+    {
+        for (int i = 0; i < 14; ++i)
+        {
+            armQIndices.push_back(7 + i);
+            armVIndices.push_back(6 + i);
+        }
+        for (int i = 0; i < 3; ++i)
+        {
+            waistQIndices.push_back(23 + i);
+            waistVIndices.push_back(22 + i);
+        }
+        headQIndices = {21, 22};
+        headVIndices = {20, 21};
+        leftHipPitchQ = 28;
+        rightHipPitchQ = 34;
+        targetArmQ.resize(14);
+        targetArmQ << 0.475, -1.12, 1.9, 0.86, -0.356, 0, 0, -0.475, -1.12, -1.9, 0.86, 0.356, 0, 0;
+    }
+
     //  WBC task defined and order build
     ///------------ walk --------------
     kin_tasks_walk.addTask("static_Contact");
@@ -91,7 +156,8 @@ WBC_priority::WBC_priority(int model_nv_In, int QP_nvIn, int QP_ncIn, double miu
     taskOrder_stand.emplace_back("CoMXY_HipRPY");
     taskOrder_stand.emplace_back("Pz");
     taskOrder_stand.emplace_back("HandTrackJoints");
-    taskOrder_stand.emplace_back("HeadRP");
+    if (!headQIndices.empty())
+        taskOrder_stand.emplace_back("HeadRP");
 
     kin_tasks_stand.buildPriority(taskOrder_stand);
 }
@@ -351,13 +417,13 @@ void WBC_priority::computeTau()
     qpOASES::returnValue res;
     for (int i = 0; i < QP_nv; i++)
     {
-        xOpt_iniGuess[i] = 0;
-        //        xOpt_iniGuess[i] =eigen_xOpt(i);
+        xOpt_iniGuess[i] = useFullFootContact ? eigen_xOpt(i) : 0;
         qp_g[i] = 0;
     }
-    nWSR = 200;
-    cpu_time = timeStep;
-    //    QP_prob.reset();
+    nWSR = useFullFootContact ? 500 : 200;
+    cpu_time = useFullFootContact ? 0.01 : timeStep;
+    if (useFullFootContact)
+        QP_prob.reset();
     res = QP_prob.init(qp_H, qp_g, qp_A, NULL, NULL, qp_lbA, qp_ubA, nWSR, &cpu_time, xOpt_iniGuess);
     qpStatus = qpOASES::getSimpleStatus(res);
     //    if (res==qpOASES::SUCCESSFUL_RETURN)
@@ -400,35 +466,64 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
     /// -------- walk -------------
     {
         int id = kin_tasks_walk.getId("static_Contact");
-        kin_tasks_walk.taskLib[id].errX = Eigen::VectorXd::Zero(6);
-        kin_tasks_walk.taskLib[id].derrX = Eigen::VectorXd::Zero(6);
-        kin_tasks_walk.taskLib[id].ddxDes = Eigen::VectorXd::Zero(6);
-        kin_tasks_walk.taskLib[id].dxDes = Eigen::VectorXd::Zero(6);
-        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(6, 6) * 0;
-        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(6, 6) * 0;
-        kin_tasks_walk.taskLib[id].J = Jc;
-        kin_tasks_walk.taskLib[id].dJ = dJc;
+        const bool doubleSupportWalk = useFullFootContact && legStateCur == DataBus::DSt;
+        const int contactSize = doubleSupportWalk ? 12 : 6;
+        kin_tasks_walk.taskLib[id].errX = Eigen::VectorXd::Zero(contactSize);
+        if (useFullFootContact && doubleSupportWalk)
+        {
+            if (walkContactLeg != DataBus::DSt)
+            {
+                walkLeftFootPosition = fe_l_pos_cur_W;
+                walkRightFootPosition = fe_r_pos_cur_W;
+                walkLeftFootRotation = fe_l_rot_cur_W;
+                walkRightFootRotation = fe_r_rot_cur_W;
+            }
+            kin_tasks_walk.taskLib[id].errX.segment<3>(0) = walkLeftFootPosition - fe_l_pos_cur_W;
+            kin_tasks_walk.taskLib[id].errX.segment<3>(3) = diffRot(fe_l_rot_cur_W, walkLeftFootRotation);
+            kin_tasks_walk.taskLib[id].errX.segment<3>(6) = walkRightFootPosition - fe_r_pos_cur_W;
+            kin_tasks_walk.taskLib[id].errX.segment<3>(9) = diffRot(fe_r_rot_cur_W, walkRightFootRotation);
+        }
+        else if (useFullFootContact)
+        {
+            if (walkContactLeg != legStateCur)
+            {
+                walkStancePosition = legStateCur == DataBus::LSt ? fe_l_pos_cur_W : fe_r_pos_cur_W;
+                walkStanceRotation = legStateCur == DataBus::LSt ? fe_l_rot_cur_W : fe_r_rot_cur_W;
+            }
+            const auto &currentPosition = legStateCur == DataBus::LSt ? fe_l_pos_cur_W : fe_r_pos_cur_W;
+            const auto &currentRotation = legStateCur == DataBus::LSt ? fe_l_rot_cur_W : fe_r_rot_cur_W;
+            kin_tasks_walk.taskLib[id].errX.segment<3>(0) = walkStancePosition - currentPosition;
+            kin_tasks_walk.taskLib[id].errX.segment<3>(3) = diffRot(currentRotation, walkStanceRotation);
+        }
+        if (useFullFootContact)
+            walkContactLeg = legStateCur;
+        kin_tasks_walk.taskLib[id].derrX = Eigen::VectorXd::Zero(contactSize);
+        if (useFullFootContact)
+            kin_tasks_walk.taskLib[id].derrX = -(doubleSupportWalk ? Jfe : Jc) * dq;
+        kin_tasks_walk.taskLib[id].ddxDes = Eigen::VectorXd::Zero(contactSize);
+        kin_tasks_walk.taskLib[id].dxDes = Eigen::VectorXd::Zero(contactSize);
+        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(contactSize, contactSize) * (useFullFootContact ? 100 : 0);
+        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(contactSize, contactSize) * (useFullFootContact ? 20 : 0);
+        kin_tasks_walk.taskLib[id].J = doubleSupportWalk ? Jfe : Jc;
+        kin_tasks_walk.taskLib[id].dJ = doubleSupportWalk ? dJfe : dJc;
         kin_tasks_walk.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
         id = kin_tasks_walk.getId("RedundantJoints");
-        kin_tasks_walk.taskLib[id].errX = Eigen::VectorXd::Zero(5);
-        kin_tasks_walk.taskLib[id].errX(0) = 0 - q(21);
-        kin_tasks_walk.taskLib[id].errX(1) = 0 - q(22);
-        kin_tasks_walk.taskLib[id].errX(2) = 0 - q(23);
-        kin_tasks_walk.taskLib[id].errX(3) = 0 - q(24);
-        kin_tasks_walk.taskLib[id].errX(4) = 0 - q(25);
-        kin_tasks_walk.taskLib[id].derrX = Eigen::VectorXd::Zero(5);
-        kin_tasks_walk.taskLib[id].ddxDes = Eigen::VectorXd::Zero(5);
-        kin_tasks_walk.taskLib[id].dxDes = Eigen::VectorXd::Zero(5);
-        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(5, 5) * 100;
-        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(5, 5) * 20;
-        kin_tasks_walk.taskLib[id].J = Eigen::MatrixXd::Zero(5, model_nv);
-        kin_tasks_walk.taskLib[id].J(0, 20) = 1;
-        kin_tasks_walk.taskLib[id].J(1, 21) = 1;
-        kin_tasks_walk.taskLib[id].J(2, 22) = 1;
-        kin_tasks_walk.taskLib[id].J(3, 23) = 1;
-        kin_tasks_walk.taskLib[id].J(4, 24) = 1;
-        kin_tasks_walk.taskLib[id].dJ = Eigen::MatrixXd::Zero(5, model_nv);
+        std::vector<int> redundantQ = headQIndices;
+        redundantQ.insert(redundantQ.end(), waistQIndices.begin(), waistQIndices.end());
+        std::vector<int> redundantV = headVIndices;
+        redundantV.insert(redundantV.end(), waistVIndices.begin(), waistVIndices.end());
+        const int redundantSize = redundantQ.size();
+        kin_tasks_walk.taskLib[id].errX = -gather(q, redundantQ);
+        kin_tasks_walk.taskLib[id].derrX = Eigen::VectorXd::Zero(redundantSize);
+        kin_tasks_walk.taskLib[id].ddxDes = Eigen::VectorXd::Zero(redundantSize);
+        kin_tasks_walk.taskLib[id].dxDes = Eigen::VectorXd::Zero(redundantSize);
+        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(redundantSize, redundantSize) * 100;
+        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(redundantSize, redundantSize) * 20;
+        kin_tasks_walk.taskLib[id].J = Eigen::MatrixXd::Zero(redundantSize, model_nv);
+        for (int row = 0; row < redundantSize; ++row)
+            kin_tasks_walk.taskLib[id].J(row, redundantV[row]) = 1;
+        kin_tasks_walk.taskLib[id].dJ = Eigen::MatrixXd::Zero(redundantSize, model_nv);
         kin_tasks_walk.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
         id = kin_tasks_walk.getId("Roll_Pitch_Yaw_Pz");
@@ -484,13 +579,14 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
         // kin_tasks_walk.taskLib[id].derrX = des_dq.block(0, 0, 6, 1) - dq.block(0, 0, 6, 1);
         kin_tasks_walk.taskLib[id].ddxDes = Eigen::VectorXd::Zero(6);
         kin_tasks_walk.taskLib[id].dxDes = Eigen::VectorXd::Zero(6);
-        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(6, 6) * 500;
-        kin_tasks_walk.taskLib[id].kp.block(3, 3, 3, 3) = Eigen::MatrixXd::Identity(3, 3) * 500;
+        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(6, 6) * (useFullFootContact ? 100 : 500);
+        kin_tasks_walk.taskLib[id].kp(2, 2) = useFullFootContact ? 300 : 500;
+        kin_tasks_walk.taskLib[id].kp.block(3, 3, 3, 3) = Eigen::MatrixXd::Identity(3, 3) * (useFullFootContact ? 300 : 500);
         kin_tasks_walk.taskLib[id].kp(0,0) = 100;
-        kin_tasks_walk.taskLib[id].kp(4,4) = 800;
+        kin_tasks_walk.taskLib[id].kp(4,4) = useFullFootContact ? 300 : 800;
         // kin_tasks_walk.taskLib[id].kp(3,3) = 800;
-        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(6, 6) * 10;
-        kin_tasks_walk.taskLib[id].kd(4,4) = 10;
+        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(6, 6) * (useFullFootContact ? 50 : 10);
+        kin_tasks_walk.taskLib[id].kd(4,4) = useFullFootContact ? 50 : 10;
         kin_tasks_walk.taskLib[id].J = J_base;
         kin_tasks_walk.taskLib[id].dJ = dJ_base;
         kin_tasks_walk.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
@@ -505,32 +601,41 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
         //        kin_tasks_walk.taskLib[id].derrX=-Jsw*dq;
         kin_tasks_walk.taskLib[id].ddxDes = Eigen::VectorXd::Zero(6);
         kin_tasks_walk.taskLib[id].dxDes = Eigen::VectorXd::Zero(6);
-        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(6, 6) * 500;
-        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(6, 6) * 20;
+        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(6, 6) * (useFullFootContact ? 80 : 500);
+        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(6, 6) * (useFullFootContact ? 25 : 20);
         kin_tasks_walk.taskLib[id].J = Jsw;
-        kin_tasks_walk.taskLib[id].J.block(0, 22, 6, 3).setZero(); // exculde waist joints
+        if (useFullFootContact && doubleSupportWalk)
+        {
+            kin_tasks_walk.taskLib[id].errX.setZero();
+            kin_tasks_walk.taskLib[id].J.setZero();
+        }
+        zeroColumns(kin_tasks_walk.taskLib[id].J, waistVIndices);
         kin_tasks_walk.taskLib[id].dJ = dJsw;
-        kin_tasks_walk.taskLib[id].dJ.block(0, 22, 6, 3).setZero(); // exculde waist joints
+        zeroColumns(kin_tasks_walk.taskLib[id].dJ, waistVIndices);
         kin_tasks_walk.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
         // task 6: hand track
-        double l_hip_pitch = q(28) - q(34);
-        double r_hip_pitch = q(34) - q(28);
-        Eigen::VectorXd target_arm_q;
-        target_arm_q.resize(14);
-        target_arm_q << 0.475 - 0.75*r_hip_pitch, -1.12, 1.9, 0.86, -0.356, 0, 0, -0.475 + 0.75*l_hip_pitch, -1.12, -1.9, 0.86, 0.356, 0, 0;
+        Eigen::VectorXd target_arm_q = targetArmQ;
+        if (target_arm_q.size() == 14 && leftHipPitchQ >= 0 && rightHipPitchQ >= 0)
+        {
+            const double l_hip_pitch = q(leftHipPitchQ) - q(rightHipPitchQ);
+            const double r_hip_pitch = -l_hip_pitch;
+            target_arm_q(0) -= 0.75 * r_hip_pitch;
+            target_arm_q(7) += 0.75 * l_hip_pitch;
+        }
 
         id = kin_tasks_walk.getId("HandTrackJoints");
-        kin_tasks_walk.taskLib[id].errX = Eigen::VectorXd::Zero(14);
-        kin_tasks_walk.taskLib[id].errX = target_arm_q - q.block<14, 1>(7, 0);
-        kin_tasks_walk.taskLib[id].derrX = Eigen::VectorXd::Zero(14);
-        kin_tasks_walk.taskLib[id].ddxDes = Eigen::VectorXd::Zero(14);
-        kin_tasks_walk.taskLib[id].dxDes = Eigen::VectorXd::Zero(14);
-        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(14, 14) * 200; // 100
-        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(14, 14) * 10;
-        kin_tasks_walk.taskLib[id].J = Eigen::MatrixXd::Zero(14, model_nv);
-        kin_tasks_walk.taskLib[id].J.block(0, 6, 14, 14) = Eigen::MatrixXd::Identity(14, 14);
-        kin_tasks_walk.taskLib[id].dJ = Eigen::MatrixXd::Zero(14, model_nv);
+        const int armSize = armQIndices.size();
+        kin_tasks_walk.taskLib[id].errX = target_arm_q - gather(q, armQIndices);
+        kin_tasks_walk.taskLib[id].derrX = Eigen::VectorXd::Zero(armSize);
+        kin_tasks_walk.taskLib[id].ddxDes = Eigen::VectorXd::Zero(armSize);
+        kin_tasks_walk.taskLib[id].dxDes = Eigen::VectorXd::Zero(armSize);
+        kin_tasks_walk.taskLib[id].kp = Eigen::MatrixXd::Identity(armSize, armSize) * 200;
+        kin_tasks_walk.taskLib[id].kd = Eigen::MatrixXd::Identity(armSize, armSize) * 10;
+        kin_tasks_walk.taskLib[id].J = Eigen::MatrixXd::Zero(armSize, model_nv);
+        for (int row = 0; row < armSize; ++row)
+            kin_tasks_walk.taskLib[id].J(row, armVIndices[row]) = 1;
+        kin_tasks_walk.taskLib[id].dJ = Eigen::MatrixXd::Zero(armSize, model_nv);
         kin_tasks_walk.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
     }
 
@@ -538,11 +643,28 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
     {
         int id = kin_tasks_stand.getId("static_Contact");
         kin_tasks_stand.taskLib[id].errX = Eigen::VectorXd::Zero(12);
+        if (useFullFootContact)
+        {
+            if (!standContactInitialized)
+            {
+                standContactInitialized = true;
+                standLeftFootPosition = fe_l_pos_cur_W;
+                standRightFootPosition = fe_r_pos_cur_W;
+                standLeftFootRotation = fe_l_rot_cur_W;
+                standRightFootRotation = fe_r_rot_cur_W;
+            }
+            kin_tasks_stand.taskLib[id].errX.segment<3>(0) = standLeftFootPosition - fe_l_pos_cur_W;
+            kin_tasks_stand.taskLib[id].errX.segment<3>(3) = diffRot(fe_l_rot_cur_W, standLeftFootRotation);
+            kin_tasks_stand.taskLib[id].errX.segment<3>(6) = standRightFootPosition - fe_r_pos_cur_W;
+            kin_tasks_stand.taskLib[id].errX.segment<3>(9) = diffRot(fe_r_rot_cur_W, standRightFootRotation);
+        }
         kin_tasks_stand.taskLib[id].derrX = Eigen::VectorXd::Zero(12);
+        if (useFullFootContact)
+            kin_tasks_stand.taskLib[id].derrX = -Jfe * dq;
         kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(12);
         kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(12);
-        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(12, 12) * 0;
-        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(12, 12) * 0;
+        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(12, 12) * (useFullFootContact ? 100 : 0);
+        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(12, 12) * (useFullFootContact ? 20 : 0);
         kin_tasks_stand.taskLib[id].J = Eigen::MatrixXd::Zero(12, model_nv);
         Eigen::MatrixXd taskCtMap = Eigen::MatrixXd::Zero(3, 3);
         taskCtMap(0, 0) = 0;
@@ -550,10 +672,14 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
         taskCtMap(2, 2) = 1;
         taskCtMap = fe_l_rot_cur_W * taskCtMap * fe_l_rot_cur_W.transpose(); // disable ankle roll joint
         kin_tasks_stand.taskLib[id].J = Jfe;
-        kin_tasks_stand.taskLib[id].J.block(3, 0, 3, model_nv) = taskCtMap * kin_tasks_stand.taskLib[id].J.block(3, 0, 3, model_nv);
-        kin_tasks_stand.taskLib[id].J.block(9, 0, 3, model_nv) = taskCtMap * kin_tasks_stand.taskLib[id].J.block(9, 0, 3, model_nv);
-        kin_tasks_stand.taskLib[id].J.block(0, 22, 12, 3).setZero(); // exculde waist joints
-        kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(12, model_nv);
+        if (!useFullFootContact)
+        {
+            kin_tasks_stand.taskLib[id].J.block(3, 0, 3, model_nv) = taskCtMap * kin_tasks_stand.taskLib[id].J.block(3, 0, 3, model_nv);
+            kin_tasks_stand.taskLib[id].J.block(9, 0, 3, model_nv) = taskCtMap * kin_tasks_stand.taskLib[id].J.block(9, 0, 3, model_nv);
+        }
+        zeroColumns(kin_tasks_stand.taskLib[id].J, waistVIndices);
+        kin_tasks_stand.taskLib[id].dJ = useFullFootContact ? dJfe : Eigen::MatrixXd::Zero(12, model_nv);
+        zeroColumns(kin_tasks_stand.taskLib[id].dJ, waistVIndices);
         kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
         id = kin_tasks_stand.getId("HipRPY");
@@ -570,8 +696,8 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
         taskMapRPY(1, 4) = 1;
         taskMapRPY(2, 5) = 1;
         kin_tasks_stand.taskLib[id].J = taskMapRPY * J_hip_link;
-        kin_tasks_stand.taskLib[id].J.block(0, 22, 3, 3).setZero();
-        kin_tasks_stand.taskLib[id].J.block(0, 6, 3, 14).setZero();
+        zeroColumns(kin_tasks_stand.taskLib[id].J, waistVIndices);
+        zeroColumns(kin_tasks_stand.taskLib[id].J, armVIndices);
         kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(3, model_nv);
         kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
@@ -581,14 +707,14 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
         kin_tasks_stand.taskLib[id].derrX = Eigen::VectorXd::Zero(1);
         kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(1);
         kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(1);
-        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(1, 1) * 2000; // 100
-        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(1, 1) * 10;
+        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(1, 1) * (useFullFootContact ? 500 : 2000);
+        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(1, 1) * (useFullFootContact ? 50 : 10);
         Eigen::MatrixXd taskMap = Eigen::MatrixXd::Zero(1, 6);
         taskMap(0, 2) = 1;
         kin_tasks_stand.taskLib[id].J = taskMap * J_base;
-        kin_tasks_stand.taskLib[id].J.block(0, 22, 1, 3).setZero();
+        zeroColumns(kin_tasks_stand.taskLib[id].J, waistVIndices);
         kin_tasks_stand.taskLib[id].dJ = taskMap * dJ_base;
-        kin_tasks_stand.taskLib[id].dJ.block(0, 22, 1, 3).setZero();
+        zeroColumns(kin_tasks_stand.taskLib[id].dJ, waistVIndices);
         kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
         id = kin_tasks_stand.getId("CoMTrack");
@@ -600,7 +726,7 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
         kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(2, 2) * 2000; // 100
         kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(2, 2) * 100;
         kin_tasks_stand.taskLib[id].J = Jcom.block(0, 0, 2, model_nv);
-        kin_tasks_stand.taskLib[id].J.block(0, 6, 2, 14).setZero();
+        zeroColumns(kin_tasks_stand.taskLib[id].J, armVIndices);
         kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(2, model_nv);
         kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
@@ -618,55 +744,58 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
 //                    kin_tasks_stand.taskLib[id].derrX.block(2,0,3,1)=-taskMapRPY*J_hip_link*dq;
         kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(5);
         kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(5);
-        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(5, 5) * 250; // 100
-		kin_tasks_stand.taskLib[id].kp.block(2, 2, 3, 3) = Eigen::MatrixXd::Identity(3,3)*1000;
-		kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(5, 5) * 10;
-        	kin_tasks_stand.taskLib[id].kd.block(2, 2, 3, 3) = Eigen::MatrixXd::Identity(3, 3) * 10;   // 100  // for hip rpy
+        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(5, 5) * (useFullFootContact ? 100 : 250);
+		kin_tasks_stand.taskLib[id].kp.block(2, 2, 3, 3) = Eigen::MatrixXd::Identity(3,3)*(useFullFootContact ? 300 : 1000);
+		kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(5, 5) * (useFullFootContact ? 30 : 10);
+        kin_tasks_stand.taskLib[id].kd.block(2, 2, 3, 3) = Eigen::MatrixXd::Identity(3, 3) * (useFullFootContact ? 50 : 10);
         kin_tasks_stand.taskLib[id].J = Eigen::MatrixXd::Zero(5, model_nv);
         kin_tasks_stand.taskLib[id].J.block(0, 0, 2, model_nv) = Jcom.block(0, 0, 2, model_nv);
         kin_tasks_stand.taskLib[id].J.block(2, 0, 3, model_nv) = taskMapRPY * J_hip_link;
-        kin_tasks_stand.taskLib[id].J.block(2, 22, 3, 3).setZero(); // exculde waist joints
-        kin_tasks_stand.taskLib[id].J.block(2, 6, 3, 14).setZero(); // exculde arm joints
+        zeroColumns(kin_tasks_stand.taskLib[id].J, waistVIndices);
+        zeroColumns(kin_tasks_stand.taskLib[id].J, armVIndices);
         kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(5, model_nv);
         kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
-        kin_tasks_stand.taskLib[id].W.diagonal()(22) = 200;
-        kin_tasks_stand.taskLib[id].W.diagonal()(23) = 200;
+        for (const int column : waistVIndices)
+            kin_tasks_stand.taskLib[id].W.diagonal()(column) = 200;
 
         // define swing arm motion
-        Eigen::VectorXd target_arm_q;
-        target_arm_q.resize(14);
-        target_arm_q << 0.475, -1.12, 1.9, 0.86, -0.356, 0, 0, -0.475, -1.12, -1.9, 0.86, 0.356, 0, 0;
+        Eigen::VectorXd target_arm_q = targetArmQ;
 
         id = kin_tasks_stand.getId("HandTrackJoints");
-        kin_tasks_stand.taskLib[id].errX = Eigen::VectorXd::Zero(14);
-        kin_tasks_stand.taskLib[id].errX = target_arm_q - q.block<14, 1>(7, 0);
-        kin_tasks_stand.taskLib[id].derrX = Eigen::VectorXd::Zero(14);
-        kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(14);
-        kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(14);
-        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(14, 14) * 2000; // 100
-        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(14, 14) * 100;
-        kin_tasks_stand.taskLib[id].J = Eigen::MatrixXd::Zero(14, model_nv);
-        kin_tasks_stand.taskLib[id].J.block(0, 6, 14, 14) = Eigen::MatrixXd::Identity(14, 14);
-        kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(14, model_nv);
+        const int standArmSize = armQIndices.size();
+        kin_tasks_stand.taskLib[id].errX = target_arm_q - gather(q, armQIndices);
+        kin_tasks_stand.taskLib[id].derrX = Eigen::VectorXd::Zero(standArmSize);
+        kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(standArmSize);
+        kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(standArmSize);
+        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(standArmSize, standArmSize) * (useFullFootContact ? 200 : 2000);
+        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(standArmSize, standArmSize) * (useFullFootContact ? 30 : 100);
+        kin_tasks_stand.taskLib[id].J = Eigen::MatrixXd::Zero(standArmSize, model_nv);
+        for (int row = 0; row < standArmSize; ++row)
+            kin_tasks_stand.taskLib[id].J(row, armVIndices[row]) = 1;
+        kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(standArmSize, model_nv);
         kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
         // Enter here functions to send actuator commands, like:
         // arm-l: 0-6, arm-r: 7-13, head: 14,15, waist: 16-18, leg-l: 19-24, leg-r: 25-30
 
-        id = kin_tasks_stand.getId("HeadRP");
-        kin_tasks_stand.taskLib[id].errX = Eigen::VectorXd::Zero(2);
-        kin_tasks_stand.taskLib[id].errX(0) = 0 - q(21);
-        kin_tasks_stand.taskLib[id].errX(1) = base_rpy_cur(1) - q(22);
-        kin_tasks_stand.taskLib[id].derrX = Eigen::VectorXd::Zero(2);
-        kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(2);
-        kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(2);
-        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(2, 2) * 100; // 100
-        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(2, 2) * 10;
-        kin_tasks_stand.taskLib[id].J = Eigen::MatrixXd::Zero(2, model_nv);
-        kin_tasks_stand.taskLib[id].J(0, 20) = 1;
-        kin_tasks_stand.taskLib[id].J(1, 21) = 1;
-        kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(2, model_nv);
-        kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
+        if (!headQIndices.empty())
+        {
+            id = kin_tasks_stand.getId("HeadRP");
+            const int headSize = headQIndices.size();
+            kin_tasks_stand.taskLib[id].errX = -gather(q, headQIndices);
+            if (headSize > 1)
+                kin_tasks_stand.taskLib[id].errX(1) += base_rpy_cur(1);
+            kin_tasks_stand.taskLib[id].derrX = Eigen::VectorXd::Zero(headSize);
+            kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(headSize);
+            kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(headSize);
+            kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(headSize, headSize) * 100;
+            kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(headSize, headSize) * 10;
+            kin_tasks_stand.taskLib[id].J = Eigen::MatrixXd::Zero(headSize, model_nv);
+            for (int row = 0; row < headSize; ++row)
+                kin_tasks_stand.taskLib[id].J(row, headVIndices[row]) = 1;
+            kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(headSize, model_nv);
+            kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
+        }
 
         id = kin_tasks_stand.getId("Roll_Pitch_Yaw");
         kin_tasks_stand.taskLib[id].errX = Eigen::VectorXd::Zero(3);
@@ -687,20 +816,17 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
         kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
 
         id = kin_tasks_stand.getId("fixedWaist");
-        kin_tasks_stand.taskLib[id].errX = Eigen::VectorXd::Zero(3);
-        kin_tasks_stand.taskLib[id].errX(0) = 0 - q(23);
-        kin_tasks_stand.taskLib[id].errX(1) = 0 - q(24);
-        kin_tasks_stand.taskLib[id].errX(2) = 0 - q(25);
-        kin_tasks_stand.taskLib[id].derrX = Eigen::VectorXd::Zero(3);
-        kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(3);
-        kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(3);
-        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(3, 3) * 200;
-        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(3, 3) * 20;
-        kin_tasks_stand.taskLib[id].J = Eigen::MatrixXd::Zero(3, model_nv);
-        kin_tasks_stand.taskLib[id].J(0, 22) = 1;
-        kin_tasks_stand.taskLib[id].J(1, 23) = 1;
-        kin_tasks_stand.taskLib[id].J(2, 24) = 1;
-        kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(3, model_nv);
+        const int waistSize = waistQIndices.size();
+        kin_tasks_stand.taskLib[id].errX = -gather(q, waistQIndices);
+        kin_tasks_stand.taskLib[id].derrX = Eigen::VectorXd::Zero(waistSize);
+        kin_tasks_stand.taskLib[id].ddxDes = Eigen::VectorXd::Zero(waistSize);
+        kin_tasks_stand.taskLib[id].dxDes = Eigen::VectorXd::Zero(waistSize);
+        kin_tasks_stand.taskLib[id].kp = Eigen::MatrixXd::Identity(waistSize, waistSize) * 200;
+        kin_tasks_stand.taskLib[id].kd = Eigen::MatrixXd::Identity(waistSize, waistSize) * 20;
+        kin_tasks_stand.taskLib[id].J = Eigen::MatrixXd::Zero(waistSize, model_nv);
+        for (int row = 0; row < waistSize; ++row)
+            kin_tasks_stand.taskLib[id].J(row, waistVIndices[row]) = 1;
+        kin_tasks_stand.taskLib[id].dJ = Eigen::MatrixXd::Zero(waistSize, model_nv);
         kin_tasks_stand.taskLib[id].W.diagonal() = Eigen::VectorXd::Ones(model_nv);
     }
 

@@ -1,0 +1,65 @@
+{
+  "name": "Lyenbot",
+  "urdf": "../../models/lyn03-V07-urdf_C01-260414/lyn03-V07-C01-260326.urdf",
+  "scene": "../../models/lyn03-V07-urdf_C01-260414/generated/scene_lyenbot.xml",
+  "joint_control": "../lyenbot_joint_ctrl_config.json",
+  "frames": {
+    "base_body": "base_link",
+    "left_foot": "left_foot_contact_point",
+    "right_foot": "right_foot_contact_point",
+    "left_hand": "left_elbow_roll_link",
+    "right_hand": "right_elbow_roll_link",
+    "left_hip": "left_hip_pitch_link",
+    "right_hip": "right_hip_pitch_link",
+    "hip_reference": "base_link"
+  },
+  "sensors": {
+    "orientation": "baselink-quat",
+    "velocity": "baselink-velocity",
+    "gyro": "baselink-gyro",
+    "acceleration": "baselink-baseAcc",
+    "left_foot_contact": "lf-touch",
+    "right_foot_contact": "rf-touch"
+  },
+  "joints": {
+    "actuated": [
+      "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint",
+      "left_knee_pitch_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+      "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint",
+      "right_knee_pitch_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+      "waist_yaw_joint",
+      "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_elbow_yaw_joint",
+      "left_elbow_pitch_joint", "left_elbow_roll_joint",
+      "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_elbow_yaw_joint",
+      "right_elbow_pitch_joint", "right_elbow_roll_joint"
+    ],
+    "left_arm": ["left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_elbow_yaw_joint", "left_elbow_pitch_joint", "left_elbow_roll_joint"],
+    "right_arm": ["right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_elbow_yaw_joint", "right_elbow_pitch_joint", "right_elbow_roll_joint"],
+    "left_leg": ["left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint", "left_knee_pitch_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint"],
+    "right_leg": ["right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint", "right_knee_pitch_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint"],
+    "waist": ["waist_yaw_joint"],
+    "head": []
+  },
+  "initial_joint_positions": [
+    -0.20, 0.0, 0.0, 0.40, -0.20, 0.0,
+    -0.20, 0.0, 0.0, 0.40, -0.20, 0.0,
+    0.0,
+    0.15, 0.20, 0.0, 0.35, 0.0,
+    0.15, -0.20, 0.0, 0.35, 0.0
+  ],
+  "gait": {
+    "nominal_base_height": 0.850693,
+    "hip_width": 0.136323,
+    "foot_height": 0.0407,
+    "swing_time": 1.50,
+    "walking_speed": 0.15
+  },
+  "simulation": {
+    "timestep": 0.001,
+    "joint_damping": 0.1,
+    "joint_friction_loss": 0.02,
+    "joint_armature": 0.01,
+    "floor_friction": 1.0,
+    "touchdown_force": 20.0
+  }
+}

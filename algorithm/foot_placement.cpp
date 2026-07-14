@@ -8,6 +8,8 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 #include "foot_placement.h"
 #include "bezier_1D.h"
 
+#include <algorithm>
+
 void FootPlacement::dataBusRead(DataBus &robotState)
 {
     posStart_W = robotState.swingStartPos_W;
@@ -83,6 +85,9 @@ void FootPlacement::getSwingPos()
 
     posDes_W(0) += xOff_W;
     posDes_W(1) += yOff_W;
+    posDes_W(0) = std::clamp(posDes_W(0), posStart_W(0) - maxStepLength, posStart_W(0) + maxStepLength);
+    posDes_W(1) = std::clamp(posDes_W(1), posStart_W(1) - maxStepWidthChange,
+                            posStart_W(1) + maxStepWidthChange);
     //
     //    double yOff=0.005; // positive for moving the leg inside
     //    if (legState==DataBus::LSt)

@@ -105,7 +105,7 @@ void GaitScheduler::step()
     else if (motionState == DataBus::Walk)
     {
         enableNextStep = true;
-        dPhi = 1.0 / tSwing * dt;
+        dPhi = enableDoubleSupportTransfer && legState == DataBus::DSt ? 0.0 : 1.0 / tSwing * dt;
     }
     else if (motionState == DataBus::Walk2Stand)
         dPhi = 1.0 / tSwing * dt;
@@ -130,31 +130,64 @@ void GaitScheduler::step()
         }
     }
 
-    if (legState == DataBus::LSt && FRest[2] >= 280 && phi >= 0.6)
+    if (enableDoubleSupportTransfer && motionState == DataBus::Walk && isIni && legState == DataBus::DSt)
+    {
+        doubleSupportElapsed += dt;
+        transferPhi = std::min(1.0, doubleSupportElapsed / doubleSupportTime);
+        if (doubleSupportElapsed >= doubleSupportTime)
+        {
+            legState = pendingSupport;
+            doubleSupportElapsed = 0.0;
+            transferPhi = 0.0;
+            phi = 0.0;
+            if (legState == DataBus::LSt)
+            {
+                swingStartPos_W = fe_r_pos_W;
+                stanceStartPos_W = fe_l_pos_W;
+            }
+            else
+            {
+                swingStartPos_W = fe_l_pos_W;
+                stanceStartPos_W = fe_r_pos_W;
+            }
+        }
+    }
+
+    const double rightContactForce = useMeasuredContact ? Fz_R_m : FRest[2];
+    const double leftContactForce = useMeasuredContact ? Fz_L_m : FLest[2];
+    const double swingContactForce = legState == DataBus::LSt ? rightContactForce : leftContactForce;
+    if (useMeasuredContact && swingContactForce < 1.0)
+        swingWasAirborne = true;
+    const bool validTouchdown = !useMeasuredContact || swingWasAirborne;
+    if (legState == DataBus::LSt && validTouchdown && rightContactForce >= FzThrehold && phi >= minimumTouchdownPhase)
     // if (legState == DataBus::LSt && ((FRest[2] >= 280 && phi >= 0.6) || (phi >=0.99)))
     // if (legState == DataBus::LSt && phi >= 0.9)
     {
         if (enableNextStep)
         {
             // std::cout << "#######right" << std::endl;
-            legState = DataBus::RSt;
+            pendingSupport = DataBus::RSt;
+            legState = enableDoubleSupportTransfer ? DataBus::DSt : DataBus::RSt;
             swingStartPos_W = fe_l_pos_W;
             stanceStartPos_W = fe_r_pos_W;
             phi = 0;
+            swingWasAirborne = false;
             stepNumCur++;
         }
     }
-    else if (legState == DataBus::RSt && FLest[2] >= 280 && phi >= 0.6)
+    else if (legState == DataBus::RSt && validTouchdown && leftContactForce >= FzThrehold && phi >= minimumTouchdownPhase)
     // else if (legState == DataBus::RSt && ((FLest[2] >= 280 && phi >= 0.6) || (phi >=0.99)))
     // else if (legState == DataBus::RSt && phi >= 0.9)
     {
         if (enableNextStep)
         {
             // std::cout << "#######left" << std::endl;
-            legState = DataBus::LSt;
+            pendingSupport = DataBus::LSt;
+            legState = enableDoubleSupportTransfer ? DataBus::DSt : DataBus::LSt;
             swingStartPos_W = fe_r_pos_W;
             stanceStartPos_W = fe_l_pos_W;
             phi = 0;
+			swingWasAirborne = false;
 			stepNumCur++;
         }
     }
@@ -205,7 +238,7 @@ void GaitScheduler::step()
 		posHip_W = hip_l_pos_W;
 		posST_W=fe_r_pos_W;
 		theta0=3.1415*0.5;
-		legStateNext = DataBus::DSt;
+		legStateNext = pendingSupport;
 	}
 
 }
@@ -213,12 +246,6 @@ void GaitScheduler::step()
 void GaitScheduler::start(){
 	start_walk = true;
 }
-
-
-
-
-
-
 
 
 
