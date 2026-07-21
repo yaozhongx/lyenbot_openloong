@@ -25,7 +25,9 @@ public:
     Eigen::Vector3d tau_upp_walk_L, tau_low_walk_L;  // foot end contact torque limit for walk state, in body frame
     double f_z_low{0},f_z_upp{0};
     DataBus::LegState legStateCur;
+    DataBus::LegState legStateNextCur;
     DataBus::MotionState motionStateCur;
+    bool contactReleaseCur{false}; // LYENBOT MODIFY: stance-only kinematics with double-foot wrench constraints
     WBC_priority(int model_nv_In, int QP_nvIn, int QP_ncIn, double miu_In, double dt,
                  const RobotModelConfig *config = nullptr, const pinocchio::Model *model = nullptr);
     double miu{0.5};
@@ -72,6 +74,9 @@ private:
     qpOASES::int_t nWSR=100, last_nWSR{0};
     qpOASES::real_t cpu_time=0.1, last_cpu_time{0};
     int qpStatus{0};
+    double qpEqualityResidualInf{0.0};
+    double qpInequalityViolationMax{0.0};
+    double swingFootFzMax{1e10};
     int QP_nv;
     int QP_nc;
     void copy_Eigen_to_real_t(qpOASES::real_t* target, const Eigen::MatrixXd &source, int nRows, int nCols);
@@ -89,7 +94,11 @@ private:
     int leftHipPitchQ{-1}, rightHipPitchQ{-1};
     Eigen::VectorXd targetArmQ;
     bool useFullFootContact{false};
+    bool useCoupledCopConstraints{false};
+    double contactHalfLength{0.0};
+    double contactHalfWidth{0.0};
     bool standContactInitialized{false};
+    bool walkDoubleSupportInitialized{false};
     Eigen::Vector3d standLeftFootPosition, standRightFootPosition;
     Eigen::Matrix3d standLeftFootRotation, standRightFootRotation;
     DataBus::LegState walkContactLeg{DataBus::DSt};
@@ -100,7 +109,7 @@ private:
     static void zeroColumns(Eigen::MatrixXd &matrix, const std::vector<int> &indices);
 
     static const int QP_nv_des=18;
-    static const int QP_nc_des=22;
+    static const int QP_nc_des=26;
 
     qpOASES::real_t qp_H[QP_nv_des*QP_nv_des];
     qpOASES::real_t qp_A[QP_nc_des*QP_nv_des];

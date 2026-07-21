@@ -1,5 +1,5 @@
 <mujoco model="lyenbot">
-  <!-- generated from /home/yzx/Openloong/lyenbot_openloong/models/lyn03-V07-urdf_C01-260414/lyn03-V07-C01-260326.urdf sha256=86cc7c32154cfc938337ec7eaf77a42c3146fc39b91f214fb87ec5c2c874ce22; command: generate_mjcf common/robot_configs/lyenbot.json -->
+  <!-- generated from /home/yzx/Openloong/lyenbot_openloong/models/lyn03-V07-urdf_C01-260414/lyn03-V07-C01-260326.urdf sha256=86cc7c32154cfc938337ec7eaf77a42c3146fc39b91f214fb87ec5c2c874ce22; command: generate_mjcf ../common/robot_configs/lyenbot.json -->
   <compiler angle="radian" meshdir="../meshes/"/>
   <option timestep="0.001" tolerance="1e-10" solver="Newton" jacobian="dense" cone="pyramidal"/>
   <default><joint damping="0.1" frictionloss="0.02" armature="0.01"/></default>

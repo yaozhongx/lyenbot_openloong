@@ -25,7 +25,8 @@ GaitScheduler::GaitScheduler(double tSwingIn, double dtIn)
 
 void GaitScheduler::dataBusRead(const DataBus &robotState)
 {
-	if (motionState != DataBus::Stand && stepNumCur == 0)
+	if (motionState != DataBus::Stand && stepNumCur == 0
+        && (!enableInitialDoubleSupportTransfer || initialDoubleSupportCompleted))
 		legState=firstleg;
     model_nv = robotState.model_nv;
     torJoint = Eigen::VectorXd::Zero(model_nv - 6);
@@ -101,6 +102,14 @@ void GaitScheduler::step()
         isIni = false;
         enableNextStep = false;
         stepNumCur=0;
+        if (enableInitialDoubleSupportTransfer)
+        {
+            initialDoubleSupportCompleted = false;
+            doubleSupportElapsed = 0.0;
+            transferPhi = 0.0;
+            pendingSupport = firstleg;
+            legState = DataBus::DSt;
+        }
     }
     else if (motionState == DataBus::Walk)
     {
@@ -117,7 +126,18 @@ void GaitScheduler::step()
     if (!isIni &&  start_walk)
     {
         isIni = true;
-		legState = firstleg;
+		if (enableInitialDoubleSupportTransfer)
+        {
+            // LYENBOT MODIFY: begin walking with both feet constrained while
+            // the upper-level reference moves toward the first support foot.
+            pendingSupport = firstleg;
+            legState = DataBus::DSt;
+            initialDoubleSupportCompleted = false;
+            doubleSupportElapsed = 0.0;
+            transferPhi = 0.0;
+        }
+        else
+		    legState = firstleg;
         if (legState == DataBus::LSt)
         { // here define which leg support first
             swingStartPos_W = fe_r_pos_W;
@@ -132,11 +152,20 @@ void GaitScheduler::step()
 
     if (enableDoubleSupportTransfer && motionState == DataBus::Walk && isIni && legState == DataBus::DSt)
     {
-        doubleSupportElapsed += dt;
-        transferPhi = std::min(1.0, doubleSupportElapsed / doubleSupportTime);
-        if (doubleSupportElapsed >= doubleSupportTime)
+        const double pendingContactForce = pendingSupport == DataBus::LSt ? Fz_L_m : Fz_R_m;
+        const bool transferContactReady = !useMeasuredContact
+                                          || pendingContactForce >= minimumTransferContactForce;
+        if (transferContactReady)
+            doubleSupportElapsed += dt;
+        const double transferDuration = !initialDoubleSupportCompleted
+                                            && initialDoubleSupportTime > 0.0
+                                        ? initialDoubleSupportTime : doubleSupportTime;
+        transferPhi = std::min(1.0, doubleSupportElapsed / transferDuration);
+        if (doubleSupportElapsed >= transferDuration)
         {
             legState = pendingSupport;
+            if (enableInitialDoubleSupportTransfer && !initialDoubleSupportCompleted)
+                initialDoubleSupportCompleted = true;
             doubleSupportElapsed = 0.0;
             transferPhi = 0.0;
             phi = 0.0;
@@ -186,7 +215,7 @@ void GaitScheduler::step()
             legState = enableDoubleSupportTransfer ? DataBus::DSt : DataBus::LSt;
             swingStartPos_W = fe_r_pos_W;
             stanceStartPos_W = fe_l_pos_W;
-            phi = 0;
+			phi = 0;
 			swingWasAirborne = false;
 			stepNumCur++;
         }
@@ -246,12 +275,6 @@ void GaitScheduler::step()
 void GaitScheduler::start(){
 	start_walk = true;
 }
-
-
-
-
-
-
 
 
 

@@ -116,12 +116,17 @@ struct DataBus
     Eigen::Vector3d stance_fe_pos_cur_W;
     Eigen::Matrix3d stance_fe_rot_cur_W;
     Eigen::VectorXd wbc_delta_q_final, wbc_dq_final, wbc_ddq_final;
+    Eigen::VectorXd wbc_ddq_qp;
     Eigen::VectorXd wbc_tauJointRes;
     Eigen::VectorXd wbc_FrRes;
     Eigen::VectorXd Fr_ff;
     int qp_nWSR;
     double qp_cpuTime;
     int qp_status;
+    double wbc_qp_equality_residual_inf{0.0};
+    double wbc_qp_inequality_violation_max{0.0};
+    double wbc_swing_foot_fz_max{1e10};
+    bool wbc_contact_release{false}; // LYENBOT MODIFY: transitional measured-contact release
 
     // values for foot-placement
     Eigen::Vector3d swingStartPos_W;
@@ -186,6 +191,7 @@ struct DataBus
         des_ddq = Eigen::VectorXd::Zero(model_nv);
         des_dq = Eigen::VectorXd::Zero(model_nv);
         des_delta_q = Eigen::VectorXd::Zero(model_nv);
+        wbc_ddq_qp = Eigen::VectorXd::Zero(model_nv);
         base_rpy_des.setZero();
         base_pos_des.setZero();
         base_vel_des.setZero();

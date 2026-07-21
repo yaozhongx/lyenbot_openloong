@@ -84,6 +84,10 @@ target_link_libraries(walk_mpc_wbc core mujoco qpOASES ${sysSimLibs} dl)
 add_executable(walk_wbc demo/walk_wbc.cpp)
 target_link_libraries(walk_wbc core mujoco qpOASES ${sysSimLibs} dl)
 
+# LYENBOT MODIFY: configuration-aware entry retaining the original walk_wbc loop.
+add_executable(lyenbot_walk_wbc demo/lyenbot_walk_wbc.cpp)
+target_link_libraries(lyenbot_walk_wbc core mujoco qpOASES ${sysSimLibs} dl)
+
 add_executable(jump_mpc demo/jump_mpc.cpp)
 target_link_libraries(jump_mpc core mujoco qpOASES ${sysSimLibs} dl)
 
@@ -111,3 +115,11 @@ target_link_libraries(generate_mjcf core mujoco ${sysSimLibs} dl)
 
 add_executable(lyenbot_staged demo/lyenbot_staged.cpp)
 target_link_libraries(lyenbot_staged core mujoco qpOASES ${sysSimLibs} dl)
+
+# LYENBOT MODIFY: headless dynamic joint/actuator mapping acceptance test.
+add_executable(lyenbot_joint_mapping_test demo/lyenbot_joint_mapping_test.cpp)
+target_link_libraries(lyenbot_joint_mapping_test core mujoco ${sysSimLibs} dl)
+
+# LYENBOT MODIFY: headless quasi-static posture feasibility scan.
+add_executable(lyenbot_posture_feasibility_test demo/lyenbot_posture_feasibility_test.cpp)
+target_link_libraries(lyenbot_posture_feasibility_test core)

@@ -72,6 +72,11 @@ WBC_priority::WBC_priority(int model_nv_In, int QP_nvIn, int QP_ncIn, double miu
     if (config && model)
     {
         useFullFootContact = true;
+        contactHalfLength = config->contactHalfLength;
+        contactHalfWidth = config->contactHalfWidth;
+        useCoupledCopConstraints = contactHalfLength > 0.0 && contactHalfWidth > 0.0;
+        if (useCoupledCopConstraints && QP_nc != 26)
+            throw std::runtime_error("coupled CoP constraints require QP_nc=26");
         auto appendIndices = [&](const std::vector<std::string> &names, std::vector<int> &qIndices, std::vector<int> &vIndices)
         {
             for (const auto &name : names)
@@ -210,6 +215,7 @@ void WBC_priority::dataBusRead(const DataBus &robotState)
     dJ_hd_l = robotState.J_hd_l;
     dJ_hd_r = robotState.J_hd_r;
     Fr_ff = robotState.Fr_ff;
+    swingFootFzMax = robotState.wbc_swing_foot_fz_max;
     dyn_M = robotState.dyn_M;
     dyn_M_inv = robotState.dyn_M_inv;
     dyn_Ag = robotState.dyn_Ag;
@@ -218,9 +224,14 @@ void WBC_priority::dataBusRead(const DataBus &robotState)
     dq = robotState.dq;
     q = robotState.q;
     legStateCur = robotState.legState;
+    legStateNextCur = robotState.legStateNext;
     motionStateCur = robotState.motionState;
+    contactReleaseCur = robotState.wbc_contact_release;
 
-    if (legStateCur == DataBus::LSt)
+    // LYENBOT MODIFY: DSt contact release uses legStateNext as the retained stance foot.
+    const DataBus::LegState contactLeg = contactReleaseCur && legStateCur == DataBus::DSt
+                                             ? legStateNextCur : legStateCur;
+    if (contactLeg == DataBus::LSt)
     {
         Jc = robotState.J_l;
         dJc = robotState.dJ_l;
@@ -245,7 +256,6 @@ void WBC_priority::dataBusRead(const DataBus &robotState)
 
 void WBC_priority::dataBusWrite(DataBus &robotState)
 {
-    robotState.wbc_ddq_final = eigen_ddq_Opt;
     robotState.wbc_tauJointRes = tauJointRes;
     robotState.wbc_FrRes = eigen_fr_Opt;
     robotState.qp_cpuTime = cpu_time;
@@ -255,10 +265,13 @@ void WBC_priority::dataBusWrite(DataBus &robotState)
     robotState.wbc_delta_q_final = delta_q_final_kin;
     robotState.wbc_dq_final = dq_final_kin;
     robotState.wbc_ddq_final = ddq_final_kin;
+    robotState.wbc_ddq_qp = eigen_ddq_Opt;
 
     robotState.qp_status = qpStatus;
     robotState.qp_nWSR = nWSR;
     robotState.qp_cpuTime = cpu_time;
+    robotState.wbc_qp_equality_residual_inf = qpEqualityResidualInf;
+    robotState.wbc_qp_inequality_violation_max = qpInequalityViolationMax;
 }
 
 // QP problem contains joint torque, QP_nv=6+12, QP_nc=22;
@@ -290,21 +303,11 @@ void WBC_priority::computeTau()
     Mw2b.block(6, 6, 3, 3) = Rfe.transpose();
     Mw2b.block(9, 9, 3, 3) = Rfe.transpose();
 
-    Eigen::MatrixXd W = Eigen::MatrixXd::Zero(16, 12);
-    W(0, 0) = 1;
-    W(0, 2) = sqrt(2) / 2.0 * miu;
-    W(1, 0) = -1;
-    W(1, 2) = sqrt(2) / 2.0 * miu;
-    W(2, 1) = 1;
-    W(2, 2) = sqrt(2) / 2.0 * miu;
-    W(3, 1) = -1;
-    W(3, 2) = sqrt(2) / 2.0 * miu;
-    W.block<4, 4>(4, 2) = Eigen::MatrixXd::Identity(4, 4);
-    W.block<8, 6>(8, 6) = W.block<8, 6>(0, 0);
-    W = W * Mw2b;
-
-    Eigen::VectorXd f_low = Eigen::VectorXd::Zero(16);
-    Eigen::VectorXd f_upp = Eigen::VectorXd::Zero(16);
+    const int constraintsPerFoot = useCoupledCopConstraints ? 10 : 8;
+    const int inequalityCount = 2 * constraintsPerFoot;
+    Eigen::MatrixXd W = Eigen::MatrixXd::Zero(inequalityCount, 12);
+    Eigen::VectorXd f_low = Eigen::VectorXd::Zero(inequalityCount);
+    Eigen::VectorXd f_upp = Eigen::VectorXd::Zero(inequalityCount);
     Eigen::Vector3d tau_upp_fe, tau_low_fe;
     if (motionStateCur == DataBus::Stand)
     {
@@ -316,72 +319,95 @@ void WBC_priority::computeTau()
         tau_upp_fe = tau_upp_walk_L;
         tau_low_fe = tau_low_walk_L;
     }
-    //    std::cout<<"wbc_computeTau, st_fe_rot"<<std::endl<<stance_fe_rot_cur_W<<std::endl;
-
-    f_upp.block<8, 1>(0, 0) << 1e10, 1e10, 1e10, 1e10,
-        f_z_upp, tau_upp_fe(0), tau_upp_fe(1), tau_upp_fe(2);
-    f_upp.block<8, 1>(8, 0) = f_upp.block<8, 1>(0, 0);
-    f_low.block<8, 1>(0, 0) << 0, 0, 0, 0,
-        f_z_low, tau_low_fe(0), tau_low_fe(1), tau_low_fe(2);
-    f_low.block<8, 1>(8, 0) = f_low.block<8, 1>(0, 0);
+    double leftNormalForceLow = f_z_low;
+    double rightNormalForceLow = f_z_low;
+    double leftNormalForceUpper = f_z_upp;
+    double rightNormalForceUpper = f_z_upp;
+    if (useCoupledCopConstraints && motionStateCur == DataBus::Walk && legStateCur == DataBus::DSt)
+    {
+        if (legStateNextCur == DataBus::LSt)
+        {
+            rightNormalForceLow = 0.0;
+            rightNormalForceUpper = std::min(f_z_upp, swingFootFzMax);
+        }
+        else if (legStateNextCur == DataBus::RSt)
+        {
+            leftNormalForceLow = 0.0;
+            leftNormalForceUpper = std::min(f_z_upp, swingFootFzMax);
+        }
+    }
+    auto buildFootConstraints = [&](int row, int column, double normalForceLow, double normalForceUpper)
+    {
+        W(row, column) = 1;
+        W(row, column + 2) = sqrt(2) / 2.0 * miu;
+        W(row + 1, column) = -1;
+        W(row + 1, column + 2) = sqrt(2) / 2.0 * miu;
+        W(row + 2, column + 1) = 1;
+        W(row + 2, column + 2) = sqrt(2) / 2.0 * miu;
+        W(row + 3, column + 1) = -1;
+        W(row + 3, column + 2) = sqrt(2) / 2.0 * miu;
+        if (useCoupledCopConstraints)
+        {
+            W(row + 4, column + 2) = 1;
+            W(row + 5, column + 2) = contactHalfWidth;
+            W(row + 5, column + 3) = 1;
+            W(row + 6, column + 2) = contactHalfWidth;
+            W(row + 6, column + 3) = -1;
+            W(row + 7, column + 2) = contactHalfLength;
+            W(row + 7, column + 4) = 1;
+            W(row + 8, column + 2) = contactHalfLength;
+            W(row + 8, column + 4) = -1;
+            W(row + 9, column + 5) = 1;
+            f_low.segment<10>(row) << 0, 0, 0, 0, normalForceLow, 0, 0, 0, 0, tau_low_fe(2);
+            f_upp.segment<10>(row) << 1e10, 1e10, 1e10, 1e10, normalForceUpper,
+                1e10, 1e10, 1e10, 1e10, tau_upp_fe(2);
+        }
+        else
+        {
+            W.block<4, 4>(row + 4, column + 2) = Eigen::MatrixXd::Identity(4, 4);
+            f_low.segment<8>(row) << 0, 0, 0, 0, normalForceLow,
+                tau_low_fe(0), tau_low_fe(1), tau_low_fe(2);
+            f_upp.segment<8>(row) << 1e10, 1e10, 1e10, 1e10, normalForceUpper,
+                tau_upp_fe(0), tau_upp_fe(1), tau_upp_fe(2);
+        }
+    };
+    buildFootConstraints(0, 0, leftNormalForceLow, leftNormalForceUpper);
+    buildFootConstraints(constraintsPerFoot, 6, rightNormalForceLow, rightNormalForceUpper);
+    W = W * Mw2b;
 
     if (motionStateCur == DataBus::Walk || motionStateCur == DataBus::Walk2Stand)
     {
         if (legStateCur == DataBus::LSt)
         {
-            f_upp(12) = 0;
-            f_upp(13) = 0;
-            f_upp(14) = 0;
-            f_upp(15) = 0;
-
-            f_low(12) = 0;
-            f_low(13) = 0;
-            f_low(14) = 0;
-            f_low(15) = 0;
-
-            f_low(8) = -1e-7;
-            f_low(9) = -1e-7;
-            f_low(10) = -1e-7;
-            f_low(11) = -1e-7;
+            f_low.segment(constraintsPerFoot, constraintsPerFoot).setZero();
+            f_upp.segment(constraintsPerFoot, constraintsPerFoot).setZero();
         }
         else if (legStateCur == DataBus::RSt)
         {
-            f_upp(4) = 0;
-            f_upp(5) = 0;
-            f_upp(6) = 0;
-            f_upp(7) = 0;
-
-            f_low(4) = 0;
-            f_low(5) = 0;
-            f_low(6) = 0;
-            f_low(7) = 0;
-
-            f_low(0) = -1e-7;
-            f_low(1) = -1e-7;
-            f_low(2) = -1e-7;
-            f_low(3) = -1e-7;
+            f_low.head(constraintsPerFoot).setZero();
+            f_upp.head(constraintsPerFoot).setZero();
         }
     }
 
-    Eigen::MatrixXd eigen_qp_A2 = Eigen::MatrixXd::Zero(16, 18);
-    eigen_qp_A2.block<16, 12>(0, 6) = W;
-    Eigen::VectorXd neqRes_low = Eigen::VectorXd::Zero(16);
-    Eigen::VectorXd neqRes_upp = Eigen::VectorXd::Zero(16);
+    Eigen::MatrixXd eigen_qp_A2 = Eigen::MatrixXd::Zero(inequalityCount, QP_nv);
+    eigen_qp_A2.block(0, 6, inequalityCount, 12) = W;
+    Eigen::VectorXd neqRes_low = Eigen::VectorXd::Zero(inequalityCount);
+    Eigen::VectorXd neqRes_upp = Eigen::VectorXd::Zero(inequalityCount);
 
     neqRes_low = f_low - W * Fr_ff;
     neqRes_upp = f_upp - W * Fr_ff;
 
     Eigen::MatrixXd eigen_qp_A_final = Eigen::MatrixXd::Zero(QP_nc, QP_nv);
     eigen_qp_A_final.block<6, 18>(0, 0) = eigen_qp_A1;
-    eigen_qp_A_final.block<16, 18>(6, 0) = eigen_qp_A2;
+    eigen_qp_A_final.block(6, 0, inequalityCount, QP_nv) = eigen_qp_A2;
 
-    Eigen::VectorXd eigen_qp_lbA = Eigen::VectorXd::Zero(22);
-    Eigen::VectorXd eigen_qp_ubA = Eigen::VectorXd::Zero(22);
+    Eigen::VectorXd eigen_qp_lbA = Eigen::VectorXd::Zero(QP_nc);
+    Eigen::VectorXd eigen_qp_ubA = Eigen::VectorXd::Zero(QP_nc);
 
     eigen_qp_lbA.block<6, 1>(0, 0) = eqRes;
-    eigen_qp_lbA.block<16, 1>(6, 0) = neqRes_low;
+    eigen_qp_lbA.segment(6, inequalityCount) = neqRes_low;
     eigen_qp_ubA.block<6, 1>(0, 0) = eqRes;
-    eigen_qp_ubA.block<16, 1>(6, 0) = neqRes_upp;
+    eigen_qp_ubA.segment(6, inequalityCount) = neqRes_upp;
 
     Eigen::MatrixXd eigen_qp_H = Eigen::MatrixXd::Zero(QP_nv, QP_nv);
     Q2 = Eigen::MatrixXd::Identity(6, 6);
@@ -439,6 +465,12 @@ void WBC_priority::computeTau()
         for (int i = 0; i < QP_nv; i++)
             eigen_xOpt(i) = xOpt[i];
 
+    const Eigen::VectorXd qpValue = eigen_qp_A_final * eigen_xOpt;
+    qpEqualityResidualInf = (qpValue.head(6) - eqRes).lpNorm<Eigen::Infinity>();
+    const double lowerViolation = (eigen_qp_lbA.tail(inequalityCount) - qpValue.tail(inequalityCount)).maxCoeff();
+    const double upperViolation = (qpValue.tail(inequalityCount) - eigen_qp_ubA.tail(inequalityCount)).maxCoeff();
+    qpInequalityViolationMax = std::max(0.0, std::max(lowerViolation, upperViolation));
+
     eigen_ddq_Opt = ddq_final_kin;
     eigen_ddq_Opt.block<6, 1>(0, 0) += eigen_xOpt.block<6, 1>(0, 0);
     eigen_fr_Opt = Fr_ff + eigen_xOpt.block<12, 1>(6, 0);
@@ -466,18 +498,24 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
     /// -------- walk -------------
     {
         int id = kin_tasks_walk.getId("static_Contact");
-        const bool doubleSupportWalk = useFullFootContact && legStateCur == DataBus::DSt;
+        // LYENBOT MODIFY: during contact release the QP still carries both foot
+        // wrenches, while the kinematic contact task retains only the stance foot.
+        const bool doubleSupportWalk = useFullFootContact && legStateCur == DataBus::DSt
+                                       && !contactReleaseCur;
+        const DataBus::LegState contactLeg = contactReleaseCur && legStateCur == DataBus::DSt
+                                                 ? legStateNextCur : legStateCur;
         const int contactSize = doubleSupportWalk ? 12 : 6;
         kin_tasks_walk.taskLib[id].errX = Eigen::VectorXd::Zero(contactSize);
         if (useFullFootContact && doubleSupportWalk)
         {
-            if (walkContactLeg != DataBus::DSt)
+            if (!walkDoubleSupportInitialized || walkContactLeg != DataBus::DSt)
             {
                 walkLeftFootPosition = fe_l_pos_cur_W;
                 walkRightFootPosition = fe_r_pos_cur_W;
                 walkLeftFootRotation = fe_l_rot_cur_W;
                 walkRightFootRotation = fe_r_rot_cur_W;
             }
+            walkDoubleSupportInitialized = true;
             kin_tasks_walk.taskLib[id].errX.segment<3>(0) = walkLeftFootPosition - fe_l_pos_cur_W;
             kin_tasks_walk.taskLib[id].errX.segment<3>(3) = diffRot(fe_l_rot_cur_W, walkLeftFootRotation);
             kin_tasks_walk.taskLib[id].errX.segment<3>(6) = walkRightFootPosition - fe_r_pos_cur_W;
@@ -485,18 +523,19 @@ void WBC_priority::computeDdq(Pin_KinDyn &pinKinDynIn)
         }
         else if (useFullFootContact)
         {
-            if (walkContactLeg != legStateCur)
+            if (walkDoubleSupportInitialized || walkContactLeg != contactLeg)
             {
-                walkStancePosition = legStateCur == DataBus::LSt ? fe_l_pos_cur_W : fe_r_pos_cur_W;
-                walkStanceRotation = legStateCur == DataBus::LSt ? fe_l_rot_cur_W : fe_r_rot_cur_W;
+                walkStancePosition = contactLeg == DataBus::LSt ? fe_l_pos_cur_W : fe_r_pos_cur_W;
+                walkStanceRotation = contactLeg == DataBus::LSt ? fe_l_rot_cur_W : fe_r_rot_cur_W;
             }
-            const auto &currentPosition = legStateCur == DataBus::LSt ? fe_l_pos_cur_W : fe_r_pos_cur_W;
-            const auto &currentRotation = legStateCur == DataBus::LSt ? fe_l_rot_cur_W : fe_r_rot_cur_W;
+            walkDoubleSupportInitialized = false;
+            const auto &currentPosition = contactLeg == DataBus::LSt ? fe_l_pos_cur_W : fe_r_pos_cur_W;
+            const auto &currentRotation = contactLeg == DataBus::LSt ? fe_l_rot_cur_W : fe_r_rot_cur_W;
             kin_tasks_walk.taskLib[id].errX.segment<3>(0) = walkStancePosition - currentPosition;
             kin_tasks_walk.taskLib[id].errX.segment<3>(3) = diffRot(currentRotation, walkStanceRotation);
         }
         if (useFullFootContact)
-            walkContactLeg = legStateCur;
+            walkContactLeg = doubleSupportWalk ? DataBus::DSt : contactLeg;
         kin_tasks_walk.taskLib[id].derrX = Eigen::VectorXd::Zero(contactSize);
         if (useFullFootContact)
             kin_tasks_walk.taskLib[id].derrX = -(doubleSupportWalk ? Jfe : Jc) * dq;

@@ -9,6 +9,7 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 #include "bezier_1D.h"
 
 #include <algorithm>
+#include <cmath>
 
 void FootPlacement::dataBusRead(DataBus &robotState)
 {
@@ -62,12 +63,16 @@ void FootPlacement::getSwingPos()
     posDes_W(0) += 0.5 * hip_width * (cos(thetaF) - cos(yawCur + theta0));
     posDes_W(1) += 0.5 * hip_width * (sin(thetaF) - sin(yawCur + theta0));
 
-    double xOff_L = -0.07;  //-0.01; // foot-end position offset in x direction in body frame
-    double yOff_L = 0.04;   // 0.01; // foot-end position offset in y direction in body frame, positive for moving the leg inside
-    double zOff_W = -0.035; // foot-end position offset in z direction in world frame
+    double xOff_L = forwardOffset; // foot-end position offset in x direction in body frame
+    double yOff_L = inwardOffset;  // positive for moving the leg inside
+    double zOff_W = landingHeightOffset; // foot-end position offset in z direction in world frame
 
     //    posDes_W(2)=STPos_W(2)-0.04;
-    posDes_W(2) = base_pos(2) - legLength + zOff_W;
+    // LYENBOT MODIFY: an optional world-frame landing height decouples the
+    // ground target from transient floating-base estimation error.
+    posDes_W(2) = std::isfinite(fixedLandingWorldHeight)
+                    ? fixedLandingWorldHeight
+                    : base_pos(2) - legLength + zOff_W;
 
     double xOff_W(0), yOff_W(0);
     if (legState == DataBus::LSt)
@@ -104,7 +109,7 @@ void FootPlacement::getSwingPos()
 
     if (phi >= 0.98)
     {
-        zStretch += -0.002;
+        zStretch += lateTouchdownStretchStep;
 
         // std::cout << "---------------- " << zStretch << std::endl;
     }

@@ -89,6 +89,40 @@ RobotModelConfig loadRobotModelConfig(const std::string &configPath)
     config.footHeight = gait["foot_height"].asDouble();
     config.swingTime = gait["swing_time"].asDouble();
     config.walkingSpeed = gait["walking_speed"].asDouble();
+    // LYENBOT MODIFY: optional support-transfer posture parameters. Defaults
+    // preserve the original OpenLoong configuration when keys are absent.
+    config.initialDoubleSupportTime = gait.get(
+        "initial_double_support_time", config.initialDoubleSupportTime).asDouble();
+    config.doubleSupportTransferTime = gait.get(
+        "double_support_transfer_time", config.doubleSupportTransferTime).asDouble();
+    config.supportBaseHeight = gait.get(
+        "support_base_height", config.nominalBaseHeight).asDouble();
+    config.supportBaseRoll = gait.get(
+        "support_base_roll", config.supportBaseRoll).asDouble();
+    config.supportComInwardOffset = gait.get(
+        "support_com_inward_offset", config.supportComInwardOffset).asDouble();
+    config.supportBaseOutwardOffset = gait.get(
+        "support_base_outward_offset", config.supportBaseOutwardOffset).asDouble();
+    config.swingStepHeight = gait.get(
+        "swing_step_height", config.swingStepHeight).asDouble();
+    config.swingPeakPitch = gait.get(
+        "swing_peak_pitch", config.swingPeakPitch).asDouble();
+    config.swingPitchRisePhase = gait.get(
+        "swing_pitch_rise_phase", config.swingPitchRisePhase).asDouble();
+    config.swingPitchReturnPhase = gait.get(
+        "swing_pitch_return_phase", config.swingPitchReturnPhase).asDouble();
+    config.preventOutwardSwingExpansion = gait.get(
+        "prevent_outward_swing_expansion", config.preventOutwardSwingExpansion).asBool();
+    if (gait.isMember("swing_landing_world_height"))
+        config.swingLandingWorldHeight = gait["swing_landing_world_height"].asDouble();
+    if (root.isMember("contact"))
+    {
+        const auto &contact = root["contact"];
+        config.contactHalfLength = contact.get("foot_half_length", config.contactHalfLength).asDouble();
+        config.contactHalfWidth = contact.get("foot_half_width", config.contactHalfWidth).asDouble();
+        config.leftFootCollisionGeom = contact.get("left_collision_geom", "").asString();
+        config.rightFootCollisionGeom = contact.get("right_collision_geom", "").asString();
+    }
     if (root.isMember("simulation"))
     {
         const auto &simulation = root["simulation"];
@@ -98,6 +132,21 @@ RobotModelConfig loadRobotModelConfig(const std::string &configPath)
         config.simulationJointArmature = simulation.get("joint_armature", config.simulationJointArmature).asDouble();
         config.simulationFloorFriction = simulation.get("floor_friction", config.simulationFloorFriction).asDouble();
         config.touchdownForce = simulation.get("touchdown_force", config.touchdownForce).asDouble();
+    }
+    if (root.isMember("state_estimation"))
+    {
+        const auto &stateEstimation = root["state_estimation"];
+        config.stateEstimatorFootFrameGroundHeight = stateEstimation.get(
+            "foot_frame_ground_height", config.stateEstimatorFootFrameGroundHeight).asDouble();
+        config.stateEstimatorCompensateAccelerometerGravity = stateEstimation.get(
+            "compensate_accelerometer_gravity",
+            config.stateEstimatorCompensateAccelerometerGravity).asBool();
+        config.stateEstimatorAngularVelocityMeasurementNoiseScale = stateEstimation.get(
+            "angular_velocity_measurement_noise_scale",
+            config.stateEstimatorAngularVelocityMeasurementNoiseScale).asDouble();
+        if (!(config.stateEstimatorAngularVelocityMeasurementNoiseScale > 0.0))
+            throw std::runtime_error(
+                "state_estimation.angular_velocity_measurement_noise_scale must be positive");
     }
     return config;
 }

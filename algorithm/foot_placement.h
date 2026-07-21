@@ -18,6 +18,11 @@ public:
     double kp_vx{0}, kp_vy{0}, kp_wz{0};
     double legLength{1};
     double stepHeight{0.1};
+    double forwardOffset{-0.07};
+    double inwardOffset{0.04};
+    double landingHeightOffset{-0.035};
+    double fixedLandingWorldHeight{std::numeric_limits<double>::quiet_NaN()};
+    double lateTouchdownStretchStep{-0.002};
     double maxStepLength{std::numeric_limits<double>::infinity()};
     double maxStepWidthChange{std::numeric_limits<double>::infinity()};
     double phi{0};      // phase varialbe for trajectory generation, must between 0 and 1

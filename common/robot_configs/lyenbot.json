@@ -52,7 +52,30 @@
     "hip_width": 0.136323,
     "foot_height": 0.0407,
     "swing_time": 1.50,
-    "walking_speed": 0.15
+    "walking_speed": 0.15,
+    "initial_double_support_time": 3.0,
+    "double_support_transfer_time": 2.25,
+    "support_base_height": 0.805,
+    "support_base_roll": 0.375,
+    "support_com_inward_offset": 0.0147,
+    "support_base_outward_offset": 0.00025,
+    "swing_step_height": 0.035,
+    "swing_peak_pitch": 0.10,
+    "swing_pitch_rise_phase": 0.20,
+    "swing_pitch_return_phase": 0.70,
+    "prevent_outward_swing_expansion": true,
+    "swing_landing_world_height": -0.010
+  },
+  "contact": {
+    "foot_half_length": 0.08,
+    "foot_half_width": 0.04,
+    "left_collision_geom": "lf-tc-collision",
+    "right_collision_geom": "rf-tc-collision"
+  },
+  "state_estimation": {
+    "foot_frame_ground_height": 0.0,
+    "compensate_accelerometer_gravity": true,
+    "angular_velocity_measurement_noise_scale": 0.0001
   },
   "simulation": {
     "timestep": 0.001,

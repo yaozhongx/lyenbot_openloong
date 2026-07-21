@@ -22,9 +22,15 @@ public:
     bool useMeasuredContact{false};
     bool swingWasAirborne{false};
     double minimumTouchdownPhase{0.6};
+    double minimumTransferContactForce{0.0};
     double doubleSupportTime{0.40};
+    double initialDoubleSupportTime{0.0};
     double transferPhi{0.0};
     bool enableDoubleSupportTransfer{false};
+    // LYENBOT MODIFY: optional initial double-support weight transfer. It is
+    // disabled by default so the original OpenLoong first-step behavior stays unchanged.
+    bool enableInitialDoubleSupportTransfer{false};
+    bool initialDoubleSupportCompleted{false};
     double Fz_L_m{0}, Fz_R_m{0};
     DataBus::LegState firstleg, legState, legStateNext;
     DataBus::MotionState motionState;

@@ -13,8 +13,9 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 
 using namespace Eigen;
 
-StateEst::StateEst(double dtIn):
-eul_w_filter(dtIn)
+StateEst::StateEst(double dtIn, double footHeightIn, const Eigen::Vector3d &worldGravityIn):
+eul_w_filter(dtIn), footHeight(footHeightIn), worldGravity(worldGravityIn),
+compensateAccelerometerGravity(worldGravityIn.norm() > 1e-9)
 {
     dt = dtIn;
 
@@ -95,11 +96,13 @@ void StateEst::init(DataBus &Data)
     Eigen::Vector3d pWL, pWR;
     pWL = R * fe_l_pos_L;
     pWR = R * fe_r_pos_L;
-    double zOff = -(pWR(2) + pWL(2)) / 2.0 + 0.07;
+    // LYENBOT MODIFY: retain the AzureLoong 0.07 m default while allowing the
+    // configured foot-frame height to initialize other robot models.
+    double zOff = -(pWR(2) + pWL(2)) / 2.0 + footHeight;
     X0 << 0, 0, zOff,
         0, 0, 0,
-        pWL(0), pWL(1), 0.07,
-        pWR(0), pWR(1), 0.07,
+        pWL(0), pWL(1), footHeight,
+        pWR(0), pWR(1), footHeight,
         0, 0, 0;
     P0.setZero();
     for (int i = 0; i < 15; i++)
@@ -164,7 +167,17 @@ void StateEst::set(DataBus &Data)
     //--------vel, omega filter--------------------
 
 	Vector3d accTmp={acc[0],acc[1],acc[2]};
-	freeAcc = eul2Rot(0.0, 0.0, offYaw).transpose()*accTmp;
+    if (compensateAccelerometerGravity)
+    {
+        // LYENBOT MODIFY: MuJoCo accelerometer data is body-frame specific
+        // force. Rotate it with the complete attitude and add world gravity to
+        // obtain translational acceleration for the KF prediction.
+        freeAcc = Rrpy_woOff * accTmp + worldGravity;
+    }
+    else
+    {
+        freeAcc = eul2Rot(0.0, 0.0, offYaw).transpose()*accTmp;
+    }
 
     phi = Data.phi;
     legState = Data.legState;
@@ -184,7 +197,7 @@ void StateEst::getTrustRegion_wt_h()
     double bb[2]{5.0, 5.0};
     for (int i = 0; i < 2; i++)
     {
-        if (legState == DataBus::Stand)
+        if (legState == DataBus::DSt)
             aa[i] = 1.0;
         else
         {
@@ -278,7 +291,8 @@ void StateEst::update()
         // vbW.col(i) = leg_contact[i] * Rrpy_woOff * ((peB.col(i) - peB_old.col(i)) / dt + omegaLVec.cross(peB.col(i)))
         //      + (1 - leg_contact[i]) * (-base_vel);
         vbW.col(i) = leg_contact[i] * Rrpy_woOff * (velTmp.col(i) + omegaLVec.cross(peB.col(i))) + (1 - leg_contact[i]) * (-base_vel);
-        Y(12 + i) = leg_contact[i] * 0.07 + (1 - leg_contact[i]) * (base_pos(2) + pbW.col(i)(2));
+        Y(12 + i) = leg_contact[i] * footHeight
+                    + (1 - leg_contact[i]) * (base_pos(2) + pbW.col(i)(2));
     }
     if (peB_old.isZero() || peW_old.isZero())
         vbW.setZero();
@@ -298,8 +312,9 @@ void StateEst::update()
 
     K = P * C.transpose() * S_inv;
 
+    innovation = Y - C * X;
     P = (Matrix<double, 15, 15>::Identity() - K * C) * P;
-    X = X + K * (Y - C * X);
+    X = X + K * innovation;
 
     if (!startFlag)
     {

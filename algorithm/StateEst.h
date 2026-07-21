@@ -18,7 +18,8 @@ Feel free to use in any purpose, and cite OpenLoong-Dynamics-Control in any styl
 
 class StateEst {
 public:
-    StateEst(double dtIn);
+    StateEst(double dtIn, double footHeightIn = 0.07,
+             const Eigen::Vector3d &worldGravityIn = Eigen::Vector3d::Zero());
     bool get_init();
     void init(DataBus &Data); // set X0 and P0
     void set(DataBus &Data);
@@ -29,11 +30,14 @@ public:
     void getF(DataBus &Data);
 //private:
     double dt;
+    double footHeight{0.07}; // LYENBOT MODIFY: configured foot-frame height above ground
+    Eigen::Vector3d worldGravity{Eigen::Vector3d::Zero()};
+    bool compensateAccelerometerGravity{false};
     bool flag_init = true;
     bool startFlag = false;
 
     double phi;
-    double legState;
+    DataBus::LegState legState{DataBus::DSt};
     Eigen::Matrix<double, 3,1>  fe_l_pos_L, fe_r_pos_L;
     Eigen::Matrix<double, 3,1>  fe_l_vel_L, fe_r_vel_L;
     Eigen::Matrix<double, 3,1>  fe_l_pos_W, fe_r_pos_W;
@@ -60,6 +64,7 @@ public:
     Eigen::Matrix<double,15,1> X, X0;
     Eigen::Matrix<double,15,15> P, P0;
     Eigen::Matrix<double,14,1> Y;
+    Eigen::Matrix<double,14,1> innovation;
 
     Eigen::Matrix<double,15,15> Q,Qu;
     Eigen::Matrix<double,14,14> R;

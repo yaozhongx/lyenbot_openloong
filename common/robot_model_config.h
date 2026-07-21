@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <limits>
 
 struct JointLayout
 {
@@ -37,6 +38,8 @@ struct RobotModelConfig
     std::string accelerationSensor;
     std::string leftFootContactSensor;
     std::string rightFootContactSensor;
+    std::string leftFootCollisionGeom;
+    std::string rightFootCollisionGeom;
 
     JointLayout joints;
     std::vector<double> initialJointPositions;
@@ -45,12 +48,29 @@ struct RobotModelConfig
     double footHeight{0.05};
     double swingTime{0.25};
     double walkingSpeed{0.15};
+    double initialDoubleSupportTime{0.0};
+    double doubleSupportTransferTime{0.40};
+    double supportBaseHeight{1.0};
+    double supportBaseRoll{0.0};
+    double supportComInwardOffset{0.0};
+    double supportBaseOutwardOffset{0.0};
+    double swingStepHeight{0.025};
+    double swingPeakPitch{0.0};
+    double swingPitchRisePhase{0.20};
+    double swingPitchReturnPhase{0.70};
+    bool preventOutwardSwingExpansion{false};
+    double swingLandingWorldHeight{std::numeric_limits<double>::quiet_NaN()};
+    double contactHalfLength{0.0};
+    double contactHalfWidth{0.0};
     double simulationTimeStep{0.001};
     double simulationJointDamping{0.1};
     double simulationJointFrictionLoss{0.02};
     double simulationJointArmature{0.01};
     double simulationFloorFriction{1.0};
     double touchdownForce{20.0};
+    double stateEstimatorFootFrameGroundHeight{0.07};
+    bool stateEstimatorCompensateAccelerometerGravity{false};
+    double stateEstimatorAngularVelocityMeasurementNoiseScale{1.0};
 };
 
 RobotModelConfig loadRobotModelConfig(const std::string &configPath);
